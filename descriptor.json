@@ -1,5 +1,5 @@
 {
-    "name": "S_AnnoSync_VALIS",
+    "name": "AnnoSync_VALIS",
     "description": "Annotation Synchronisation using VALIS",
     "container-image": {
         "image": "mamodeiuliege/s_annosync_valis",
