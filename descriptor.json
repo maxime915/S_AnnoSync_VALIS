@@ -1,0 +1,167 @@
+{
+    "name": "S_AnnoSync_VALIS",
+    "description": "Annotation Synchronisation using VALIS",
+    "container-image": {
+        "image": "mamodeiuliege/s_annosync_valis",
+        "type": "singularity"
+    },
+    "schema-version": "cytomine-0.1",
+    "command-line": "CYTOMINE_HOST CYTOMINE_PUBLIC_KEY CYTOMINE_PRIVATE_KEY CYTOMINE_ID_PROJECT CYTOMINE_ID_SOFTWARE EVAL_ANNOTATION_GROUPS EVAL_IMAGE_GROUPS DATA_ANNOTATIONS IMAGE_CROP IMAGE_ORDERING ALIGN_TOWARD_REFERENCE REGISTRATION_TYPE MICRO_REG_MAX_DIM_PX COMPOSE_NON_RIGID",
+    "inputs": [
+        {
+            "id": "cytomine_host",
+            "name": "Cytomine host",
+            "set-by-server": true,
+            "optional": false,
+            "type": "String",
+            "value-key": "@ID",
+            "command-line-flag": "--@id"
+        },
+        {
+            "id": "cytomine_public_key",
+            "name": "Cytomine public key",
+            "set-by-server": true,
+            "optional": false,
+            "type": "String",
+            "value-key": "@ID",
+            "command-line-flag": "--@id"
+        },
+        {
+            "id": "cytomine_private_key",
+            "name": "Cytomine private key",
+            "set-by-server": true,
+            "optional": false,
+            "type": "String",
+            "value-key": "@ID",
+            "command-line-flag": "--@id"
+        },
+        {
+            "id": "cytomine_id_project",
+            "name": "Cytomine project ID",
+            "set-by-server": true,
+            "optional": false,
+            "type": "Number",
+            "value-key": "@ID",
+            "command-line-flag": "--@id"
+        },
+        {
+            "id": "cytomine_id_software",
+            "name": "Cytomine software ID",
+            "set-by-server": true,
+            "optional": false,
+            "type": "Number",
+            "value-key": "@ID",
+            "command-line-flag": "--@id"
+        },
+        {
+            "id": "eval_annotation_groups",
+            "name": "Annotation Groups for evaluation",
+            "description": "These annotation groups are used to compute accuracy metrics for the registration algorithm.",
+            "type": "ListDomain",
+            "uri": "/api/project/$currentProject$/annotationgroup.json",
+            "optional": true,
+            "default-value": "",
+            "value-key":"@ID",
+            "command-line-flag":"--@id"
+        },
+        {
+            "id": "eval_image_groups",
+            "name": "Image Groups for evaluation",
+            "description": "All annotation groups of the given image groups are added to the previous image groups for the evaluation.",
+            "type": "ListDomain",
+            "uri": "/api/project/$currentProject$/imagegroup.json",
+            "optional": true,
+            "default-value": "",
+            "value-key":"@ID",
+            "command-line-flag":"--@id"
+        },
+        {
+            "id": "data_annotations",
+            "name": "Annotation to translate",
+            "description": "These annotations will be translated on all images of the same image group they are defined in.",
+            "type": "ListDomain",
+            "uri": "/api/annotation.json?project=$currentProject$",
+            "uri-print-attribute": "id",
+            "uri-sort-attribute": "id",
+            "optional": true,
+            "default-value": "",
+            "value-key": "@ID",
+            "command-line-flag": "--@id"
+        },
+        {
+            "id": "image_crop",
+            "name": "Cropping modes for all images [see info]",
+            "description": "How to define the registration domain relative to all images. One of: 'reference' (defines the reference image as the domain), 'overlap' (means the common area only), 'all' (means the smallest area to include all images).",
+            "type": "String",
+            "optional": true,
+            "value-choices": [
+                "reference",
+                "overlap",
+                "all"
+            ],
+            "default-value": "all",
+            "value-key": "@ID",
+            "command-line-flag": "--@id"
+        },
+        {
+            "id": "image_ordering",
+            "name": "Image ordering [see info]",
+            "description": "How to order the images before doing the registration (useful for 3D registration). One of: 'auto' (default, meaning that the order doesn't matter), 'name' (to be ordered by filename), 'created' (to be ordered by addition date to Cytomine)",
+            "type": "String",
+            "optional": true,
+            "value-choices": [
+                "auto",
+                "name",
+                "created"
+            ],
+            "default-value": "auto",
+            "value-key": "@ID",
+            "command-line-flag": "--@id"
+        },
+        {
+            "id": "align_toward_reference",
+            "name": "Align Toward Reference",
+            "description": "Align images toward the reference, rather that directly to the reference. Meaningless if fewer than 3 images, see VALIS documentation for more info.",
+            "type": "Boolean",
+            "optional": true,
+            "default-value": true,
+            "value-key": "@ID",
+            "command-line-flag": "--@id"
+        },
+        {
+            "id": "registration_type",
+            "name": "Registration Type [see info]",
+            "description": "The type of registration performed by VALIS. One of 'rigid' (using affine transformations on lower resolution versions), 'non-rigid' (using non-rigid deformations on lower resolution version), 'micro' (using non-rigid deformations on higher resolution, tunable using MICRO_REG_MAX_DIM_PX).",
+            "type": "String",
+            "optional": true,
+            "value-choices": [
+                "rigid",
+                "non-rigid",
+                "micro"
+            ],
+            "default-value": "non-rigid",
+            "value-key": "@ID",
+            "command-line-flag": "--@id"
+        },
+        {
+            "id": "micro_reg_max_dim_px",
+            "name": "Maximum dimension for micro registration",
+            "description": "Maximum dimension (in pixel) for any image during the micro registration step. It is an error to specify this value if REGISTRATION_TYPE is not 'micro'",
+            "type": "Number",
+            "integer": true,
+            "optional": true,
+            "value-key": "@ID",
+            "command-line-flag": "--@id"
+        },
+        {
+            "id": "compose_non_rigid",
+            "name": "Compose using non rigid deformation",
+            "description": "See VALIS documentation for more info",
+            "type": "Boolean",
+            "optional": true,
+            "default-value": false,
+            "value-key": "@ID",
+            "command-line-flag": "--@id"
+        }
+    ]
+}

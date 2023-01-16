@@ -1,0 +1,520 @@
+"""S_AnnoSync_VALIS: Annotation Synchronisation using VALIS
+
+A Cytomine App to make annotation available in all images of an image group,
+and compute an evaluation on some hand-drawn ground truths.
+"""
+
+import contextlib
+import enum
+import logging
+import os
+import pathlib
+import typing
+import warnings
+from collections import defaultdict
+
+import cytomine
+import cytomine.models as cm
+import numpy as np
+import shapely
+import shapely.wkt
+from shapely.affinity import affine_transform
+from shapely.ops import transform
+from valis import registration
+
+T = typing.TypeVar("T")
+U = typing.TypeVar("U")
+
+
+class ImageOrdering(enum.Enum):
+    AUTO = "auto"
+    NAME = "name"
+    CREATED = "created"
+
+
+class ImageCrop(enum.Enum):
+    REFERENCE = "reference"
+    ALL = "all"
+    OVERLAP = "overlap"
+
+
+class RegistrationType(enum.Enum):
+    RIGID = "rigid"
+    NON_RIGID = "non-rigid"
+    MICRO = "micro"
+
+
+def ei(val: typing.Union[str, int]) -> int:
+    "expect int"
+    if isinstance(val, int):
+        return int(val)  # make sure bool values are converted to int
+    if isinstance(val, str) and str(int(val)) == val:
+        return int(val)
+    raise ValueError(f"{val=!r} is not an int")
+
+
+def eil(val: str) -> typing.List[int]:
+    if not val.strip():
+        return []  # allow empty lists
+    return [ei(v) for v in val.split(",")]
+
+
+def eb(val: typing.Union[str, bool]) -> bool:
+    "expect bool"
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str) and str(bool(val)).lower() == val.lower():
+        return bool(val)
+    raise ValueError(f"{val=!r} is not a bool")
+
+
+@typing.overload
+def get(
+    namespace, key: str, type: typing.Callable[[str], T], default: U
+) -> typing.Union[T, U]:
+    ...
+
+
+@typing.overload
+def get(namespace, key: str, type: typing.Callable[[str], T]) -> typing.Union[T, None]:
+    ...
+
+
+def get(
+    namespace,
+    key: str,
+    type: typing.Callable[[str], T],
+    default: typing.Optional[U] = None,
+):
+    "reads a parameter from the Namespace object, and cast it to the right type"
+    sentinel = object()
+    ret = getattr(namespace, key, sentinel)
+    if ret is sentinel:
+        return default
+    if not isinstance(ret, str):
+        raise ValueError("expected str")
+    return type(ret)
+
+
+@contextlib.contextmanager
+def no_output():
+    try:
+        with open(os.devnull, "w", encoding="utf8") as devnull:
+            with contextlib.redirect_stderr(devnull):
+                with contextlib.redirect_stdout(devnull):
+                    yield None
+    finally:
+        pass
+
+
+class RegistrationGroup(typing.NamedTuple):
+    "group of images on which there is evaluation and/or prediction tasks"
+    image_group: cm.ImageGroup
+    eval_annotation_groups: typing.Set[cm.AnnotationGroup]
+    pred_annotations: typing.Set[cm.Annotation]
+
+
+class JobParameters(typing.NamedTuple):
+    "parsed parameters for the job"
+    image_crop: ImageCrop
+    image_ordering: ImageOrdering
+    align_toward_reference: bool
+    registration_type: RegistrationType
+    micro_reg_max_dim_px: typing.Optional[int]
+    compose_non_rigid: bool
+
+    groups: typing.Sequence[RegistrationGroup]
+
+    @staticmethod
+    def check(ns):
+        "raise ValueError on bad parameters"
+
+        ## parse common parameters
+        image_crop = get(ns, "image_crop", ImageCrop, ImageCrop.ALL)
+        image_ordering = get(ns, "image_ordering", ImageOrdering, ImageOrdering.AUTO)
+        align_toward_reference = get(ns, "align_toward_reference", eb, True)
+        registration_type = get(
+            ns, "registration_type", RegistrationType, RegistrationType.NON_RIGID
+        )
+        micro_reg_max_dim_px = get(ns, "micro_reg_max_dim_px", ei)
+        compose_non_rigid = get(ns, "compose_non_rigid", eb, False)
+
+        if (
+            micro_reg_max_dim_px is not None
+            and registration_type != RegistrationType.MICRO
+        ):
+            raise ValueError(
+                "can only specify MICRO_REG_MAX_DIM if " "REGISTRATION_TYPE is 'micro'"
+            )
+
+        ## parse Cytomine parameters
+        eval_ag_ids = get(ns, "eval_annotation_groups", eil, eil(""))
+        eval_ig_ids = get(ns, "eval_image_groups", eil, eil(""))
+        pred_an_ids = get(ns, "data_annotations", eil, eil(""))
+
+        # caches to avoid duplicate API calls
+        all_image_group: typing.Dict[int, cm.ImageGroup] = {}
+        all_annotation_group: typing.Dict[int, cm.AnnotationGroup] = {}
+        ig_to_ag: typing.DefaultDict[int, typing.Set[cm.AnnotationGroup]] = defaultdict(
+            set
+        )
+        ig_to_an: typing.DefaultDict[int, typing.Set[cm.Annotation]] = defaultdict(set)
+
+        # fetch all annotation groups
+        for ag_id in eval_ag_ids:
+            if ag_id in all_annotation_group:
+                continue
+            ag = cm.AnnotationGroup().fetch(ag_id)
+            if not ag:
+                raise ValueError(f"could not fetch AnnotationGroup wih {ag_id=!r}")
+            all_annotation_group[ag_id] = ag
+
+            # get all image group before the registration
+            ig_id: int = ag.imageGroup
+            ig = cm.ImageGroup().fetch(ig_id)
+            if not ig:
+                raise ValueError(f"could not fetch ImageGroup with {ig_id=!r}")
+
+            all_image_group[ig.id] = ig
+            ig_to_ag[ig_id].add(ag)
+
+        # fetch all image groups
+        for ig_id in eval_ig_ids:
+            if ig_id in all_image_group:
+                continue
+            ig = cm.ImageGroup().fetch(ig_id)
+            all_image_group[ig_id] = ig
+
+            # fetch all annotation group in the image group !
+            agc = cm.AnnotationGroupCollection().fetch_with_filter("imagegroup", ig.id)
+            if agc is False:  # API error
+                raise ValueError("could not fetch AnnotationGroupCollection")
+
+            if not agc:  # empty collection
+                warnings.warn(f"ImageGroup {ig_id} has no AnnotationGroup")
+
+            for ag in agc:
+                if ag.id in all_annotation_group:
+                    continue
+                all_annotation_group[ag.id] = ag
+                ig_to_ag[ig_id].add(ag)
+
+        # fetch all annotations
+        for an_id in pred_an_ids:
+            an = cm.Annotation().fetch(an_id)
+
+            igiic = cm.ImageGroupImageInstanceCollection().fetch_with_filter(
+                "imageinstance", an.image
+            )
+            if not igiic:
+                raise ValueError(f"could not fetch IGIIC for {an.image=!r}")
+
+            igii: cm.ImageGroupImageInstance
+            for igii in igiic:
+
+                # igii.group: int
+                if igii.group not in all_image_group:
+                    image_group = cm.ImageGroup().fetch(igii.group)
+                    if not image_group:
+                        raise ValueError(f"could not fetch image group id={igii.group}")
+                    all_image_group[image_group.id] = image_group
+
+                ig_to_an[igii.group].add(an)
+
+        groups = [
+            RegistrationGroup(ig, ig_to_ag[ig_id], ig_to_an[ig_id])
+            for ig_id, ig in all_image_group.items()
+        ]
+
+        return JobParameters(
+            image_crop=image_crop,
+            image_ordering=image_ordering,
+            align_toward_reference=align_toward_reference,
+            registration_type=registration_type,
+            micro_reg_max_dim_px=micro_reg_max_dim_px,
+            compose_non_rigid=compose_non_rigid,
+            groups=groups,
+        )
+
+    def __repr__(self) -> str:
+        asdict = self._asdict()
+        if self.groups:
+            asdict["groups"] = [
+                (
+                    a.image_group.id,
+                    [ag.id for ag in a.eval_annotation_groups],
+                    [a.id for a in a.pred_annotations],
+                )
+                for a in self.groups
+            ]
+
+        return pretty_repr(asdict)
+
+
+def pretty_repr(o: typing.Any) -> str:
+    if isinstance(o, (int, float, str, type(None))):
+        return f"{o!r}"
+
+    if isinstance(o, enum.Enum):
+        return type(o).__name__ + "." + o.name
+
+    # named tuple
+    if isinstance(o, tuple) and hasattr(o, "_asdict"):
+        return f"{o!r}"
+
+    if isinstance(o, typing.Mapping):
+        inner = ", ".join(pretty_repr(k) + ":" + pretty_repr(v) for k, v in o.items())
+        return "{" + inner + "}"
+
+    if isinstance(o, typing.Iterable):
+        return "[" + ", ".join(pretty_repr(s) for s in o) + "]"
+
+    if hasattr(o, "__dict__"):
+        return str(type(o)) + ":" + pretty_repr(vars(o))
+
+    if hasattr(o, "__slots__"):
+        inner = pretty_repr({attr: getattr(o, attr) for attr in o.__slots__})
+        return str(type(o)) + ":" + inner
+
+    # default representation
+    return f"{o!r}"
+
+
+_img_col_cache: typing.Dict[int, cm.ImageInstanceCollection] = {}
+
+
+def _fetch_images(
+    image_group: int,
+) -> typing.Union[cm.ImageInstanceCollection, typing.Literal[False]]:
+    "caching only successful responses"
+    if ret := _img_col_cache.get(image_group, False):
+        return ret
+
+    img_col = cm.ImageInstanceCollection().fetch_with_filter("imagegroup", image_group)
+    if img_col:
+        _img_col_cache[image_group] = img_col
+    return img_col
+
+
+def iou_annotations(
+    left: cm.Annotation,
+    right: cm.Annotation,
+) -> float:
+    "compute IoU for two annotations"
+
+    geometry_l = shapely.wkt.loads(left.location)
+    geometry_r = shapely.wkt.loads(right.location)
+
+    inter = geometry_l.intersection(geometry_r).area
+    union = geometry_l.area + geometry_r.area - inter
+
+    return inter / union
+
+
+class VALISJob(typing.NamedTuple):
+
+    cytomine_job: cytomine.CytomineJob
+    parameters: JobParameters
+    name: str
+    base_dir: pathlib.Path = pathlib.Path(".")
+    logger: logging.Logger = logging.getLogger("VALISJob")
+
+    def update(self, progress: int, status: str):
+        self.cytomine_job.job.update(
+            status=cm.Job.RUNNING, progress=progress, statusComment=status
+        )
+
+    def get_images(self, group: cm.ImageGroup):
+        images = _fetch_images(group.id)
+        if not images:
+            raise ValueError(f"cannot fetch all images for {group.id=}")
+        return images
+
+    def download_images(self, group: RegistrationGroup):
+
+        images = self.get_images(group)
+
+        img: cm.ImageInstance
+        for img in images:
+            img.download(self.get_image_path(group, img), override=False)
+
+    def get_valis_args(self, group: RegistrationGroup):
+        valis_args = {
+            "src_dir": str(self.base_dir / str(group.image_group.id) / "slides"),
+            "dst_dir": str(self.base_dir / str(group.image_group.id) / "dst"),
+            "name": self.name,
+            "imgs_ordered": self.parameters.image_ordering != ImageOrdering.AUTO,
+            "compose_non_rigid": self.parameters.compose_non_rigid,
+            "align_to_reference": not self.parameters.align_toward_reference,
+            "crop": self.parameters.image_crop.value,
+        }
+
+        # skip non rigid registrations
+        if self.parameters.registration_type == RegistrationType.RIGID:
+            valis_args["non_rigid_registrar_cls"] = None
+
+        return valis_args
+
+    def register(self, group: RegistrationGroup) -> registration.Valis:
+        registrar = registration.Valis(**self.get_valis_args(group))
+
+        # rigid and non-rigid registration
+        with no_output():
+            rigid_registrar, _, _ = registrar.register()
+
+        assert rigid_registrar is not None
+
+        self.logger.info("non-micro registration done")
+
+        if self.parameters.registration_type == RegistrationType.MICRO:
+            kwargs = {}
+            if self.parameters.micro_reg_max_dim_px is not None:
+                kwargs[
+                    "max_non_rigid_registartion_dim_px"
+                ] = self.parameters.micro_reg_max_dim_px
+            with no_output():
+                registrar.register_micro(**kwargs)
+
+            self.logger.info("micro registration done")
+
+        return registrar
+
+    def get_image_path(self, group: RegistrationGroup, image: cm.ImageInstance) -> str:
+        fname = image.filename
+        if self.parameters.image_ordering == ImageOrdering.CREATED:
+            fname = f"{image.created}_{image.filename}"
+        return str(self.base_dir / str(group.image_group.id) / "slides" / fname)
+
+    def get_image_slide(
+        self,
+        group: RegistrationGroup,
+        image: cm.ImageInstance,
+        registrar: registration.Valis,
+    ) -> registration.Slide:
+        return registrar.get_slide(self.get_image_path(group, image))
+
+    def warp_annotation(
+        self,
+        annotation: cm.Annotation,
+        group: RegistrationGroup,
+        src_image: cm.ImageInstance,
+        dst_image: cm.ImageInstance,
+        registrar: registration.Valis,
+    ):
+        src_slide = self.get_image_slide(group, src_image, registrar)
+        dst_slide = self.get_image_slide(group, dst_image, registrar)
+
+        src_geometry_bl = shapely.wkt.loads(annotation.location)
+        src_geometry_tl = affine_transform(
+            src_geometry_bl, [1, 0, 0, -1, 0, src_image.height]
+        )
+
+        def warper_(x, y, z=None):
+            assert z is None
+            xy = np.stack([x, y], axis=1)
+            warped_xy = src_slide.warp_xy_from_to(xy, dst_slide)
+
+            return warped_xy[:, 0], warped_xy[:, 1]
+
+        dst_geometry_tl = transform(warper_, src_geometry_tl)
+        dst_geometry_bl = affine_transform(
+            dst_geometry_tl, [1, 0, 0, -1, 0, dst_image.height]
+        )
+
+        return cm.Annotation(
+            shapely.wkt.dumps(dst_geometry_bl),
+            dst_image.id,
+            annotation.term,
+            annotation.project,
+            annotation.track,
+            annotation.slice,
+        )
+
+    def evaluate(self, group: RegistrationGroup, registrar: registration.Valis):
+        for an_group in group.eval_annotation_groups:
+            an_coll = cm.AnnotationCollection(
+                group=an_group.id, project=group.image_group.project
+            ).fetch()
+            if not an_coll:
+                raise ValueError(
+                    f"unable to fetch annotation collection for "
+                    f"{an_group.id=} and {group.image_group.project=}"
+                )
+
+            an: cm.Annotation
+            for an in an_coll:
+                src_img = cm.ImageInstance().fetch(an.image)
+                if not src_img:
+                    raise ValueError(f"cannot fetch ImageInstance with id={an.image}")
+
+                iou_lst: typing.List[float] = []
+
+                an_gt: cm.Annotation
+                for an_gt in an_coll:
+                    if an_gt.image == an.image:
+                        continue
+
+                    dst_img = cm.ImageInstance().fetch(an_gt.image)
+                    if not dst_img:
+                        raise ValueError(
+                            f"cannot fetch ImageInstance with id={an_gt.image}"
+                        )
+
+                    # warp an to the image of an_gt
+                    pred = self.warp_annotation(an, group, src_img, dst_img, registrar)
+
+                    # IoU between gt and pred
+                    iou_lst.append(iou_annotations(pred, an_gt))
+
+                self.logger.info(
+                    "IoU: an=%d, mean=%f, std=%f (min=%f; max=%f; n=)",
+                    an.id,
+                    np.mean(iou_lst),
+                    np.std(iou_lst),
+                    np.min(iou_lst),
+                    np.max(iou_lst),
+                    len(iou_lst),
+                )
+
+    def predict(self, group: RegistrationGroup, registrar: registration.Valis):
+
+        # TODO create AnnotationGroup / AnnotationLink for all those images
+
+        annotation_collection = cm.AnnotationCollection()
+
+        for an in group.pred_annotations:
+            # get source slide
+            src_img = cm.ImageInstance().fetch(an.image)
+            if not src_img:
+                raise ValueError(f"cannot fetch ImageInstance with id={an.image}")
+
+            images = self.get_images(group.image_group)
+            img: cm.ImageInstance
+            for img in images:
+                # warp annotation from to
+                warped_an = self.warp_annotation(an, group, src_img, img, registrar)
+
+                # upload
+                annotation_collection.append(warped_an)
+
+        if not annotation_collection.save():
+            raise ValueError("could not upload all annotations")
+
+    def run(self):
+        def prog_it(progress: float, idx: int):
+            return round((100.0 * float(idx) + progress) / len(self.parameters.groups))
+
+        for idx, group in enumerate(self.parameters.groups):
+            self.update(prog_it(1, idx), f"starting on {group.image_group.id=}")
+
+            # get images and perform registration
+            self.download_images(group)
+            registrar = self.register(group)
+
+            # evaluation on ground truths data
+            self.evaluate(group, registrar)
+
+            # make some predictions
+            self.predict(group, registrar)
+
+        self.update(100, "done")
