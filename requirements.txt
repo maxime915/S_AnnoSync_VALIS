@@ -52,6 +52,6 @@ threadpoolctl==3.1.0
 tifffile==2022.10.10
 tqdm==4.64.1
 typing_extensions==4.4.0
-valis-wsi==1.0.0rc12
+valis-wsi==1.0.0rc11
 weightedstats==0.4.1
 xmlschema==1.11.3
