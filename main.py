@@ -9,6 +9,7 @@ import enum
 import logging
 import os
 import pathlib
+import sys
 import typing
 import warnings
 from collections import defaultdict
@@ -518,3 +519,27 @@ class VALISJob(typing.NamedTuple):
             self.predict(group, registrar)
 
         self.update(100, "done")
+
+
+def main(arguments):
+    with cytomine.CytomineJob.from_cli(arguments) as job:
+
+        job.job.update(
+            status=cm.Job.RUNNING, progress=0, status_comment="Initialization"
+        )
+
+        base_dir = pathlib.Path(f"./valis-slides-{job.software.id}")
+        base_dir.mkdir(exist_ok=True, parents=False)
+
+        # check all parameters and fetch from Cytomine
+        parameters = JobParameters.check(job.parameters)
+
+        VALISJob(job, parameters, "main", base_dir).run()
+
+        job.job.update(
+            status=cm.Job.TERMINATED, progress=100, status_comment="Job terminated"
+        )
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
