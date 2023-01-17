@@ -59,7 +59,7 @@
             "description": "These annotation groups are used to compute accuracy metrics for the registration algorithm.",
             "type": "ListDomain",
             "uri": "/api/project/$currentProject$/annotationgroup.json",
-            "optional": true,
+            "optional": false,
             "default-value": "",
             "value-key":"@ID",
             "command-line-flag":"--@id"
@@ -83,7 +83,7 @@
             "uri": "/api/annotation.json?project=$currentProject$",
             "uri-print-attribute": "id",
             "uri-sort-attribute": "id",
-            "optional": true,
+            "optional": false,
             "default-value": "",
             "value-key": "@ID",
             "command-line-flag": "--@id"

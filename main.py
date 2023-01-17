@@ -204,6 +204,8 @@ class JobParameters(typing.NamedTuple):
         # fetch all annotations
         for an_id in pred_an_ids:
             an = cm.Annotation().fetch(an_id)
+            if an is False:
+                raise ValueError(f"cannot fetch annotation with id={an_id}")
 
             ig_ii_c = cm.ImageGroupImageInstanceCollection().fetch_with_filter(
                 "imageinstance", an.image
@@ -526,8 +528,6 @@ class VALISJob(typing.NamedTuple):
             raise ValueError("could not upload all annotations")
 
     def run(self):
-        # TODO must do something: check that the run isn't blank
-
         def prog_it(progress: float, idx: int):
             return round((100.0 * float(idx) + progress) / len(self.parameters.groups))
 
@@ -591,6 +591,9 @@ def main(arguments):
 
         # check all parameters and fetch from Cytomine
         parameters = JobParameters.check(job.parameters)
+        
+        if not parameters.groups:
+            raise ValueError("cannot operate on empty data")
 
         VALISJob(job, parameters, "main", base_dir, logger).run()
 
