@@ -26,6 +26,8 @@ from valis import registration
 T = typing.TypeVar("T")
 U = typing.TypeVar("U")
 
+# TODO use JobData to upload a CSV file with the results
+
 
 class ImageOrdering(enum.Enum):
     AUTO = "auto"
@@ -71,30 +73,29 @@ def eb(val: typing.Union[str, bool]) -> bool:
 
 @typing.overload
 def get(
-    namespace, key: str, type: typing.Callable[[str], T], default: U
+    namespace, key: str, type_: typing.Callable[[str], T], default: U
 ) -> typing.Union[T, U]:
     ...
 
 
 @typing.overload
-def get(namespace, key: str, type: typing.Callable[[str], T]) -> typing.Union[T, None]:
+def get(namespace, key: str, type_: typing.Callable[[str], T]) -> typing.Union[T, None]:
     ...
 
 
 def get(
     namespace,
     key: str,
-    type: typing.Callable[[str], T],
+    type_: typing.Callable[[str], T],
     default: typing.Optional[U] = None,
 ):
     "reads a parameter from the Namespace object, and cast it to the right type"
-    sentinel = object()
-    ret = getattr(namespace, key, sentinel)
-    if ret is sentinel:
+    ret = getattr(namespace, key, None)
+    if ret is None:
         return default
-    if not isinstance(ret, str):
-        raise ValueError("expected str")
-    return type(ret)
+    if isinstance(ret, (str, int, bool, float)):
+        return type_(ret)
+    raise TypeError(f"unsupported type: {type(ret)=!r} ({ret=!r})")
 
 
 @contextlib.contextmanager
@@ -204,23 +205,22 @@ class JobParameters(typing.NamedTuple):
         for an_id in pred_an_ids:
             an = cm.Annotation().fetch(an_id)
 
-            igiic = cm.ImageGroupImageInstanceCollection().fetch_with_filter(
+            ig_ii_c = cm.ImageGroupImageInstanceCollection().fetch_with_filter(
                 "imageinstance", an.image
             )
-            if not igiic:
-                raise ValueError(f"could not fetch IGIIC for {an.image=!r}")
+            if not ig_ii_c:
+                raise ValueError(f"could not fetch IG_II_c for {an.image=!r}")
 
-            igii: cm.ImageGroupImageInstance
-            for igii in igiic:
+            ig_ii: cm.ImageGroupImageInstance
+            for ig_ii in ig_ii_c:
 
-                # igii.group: int
-                if igii.group not in all_image_group:
-                    image_group = cm.ImageGroup().fetch(igii.group)
+                if ig_ii.group not in all_image_group:
+                    image_group = cm.ImageGroup().fetch(ig_ii.group)
                     if not image_group:
-                        raise ValueError(f"could not fetch image group id={igii.group}")
+                        raise ValueError(f"could not fetch image group id={ig_ii.group}")
                     all_image_group[image_group.id] = image_group
 
-                ig_to_an[igii.group].add(an)
+                ig_to_an[ig_ii.group].add(an)
 
         groups = [
             RegistrationGroup(ig, ig_to_ag[ig_id], ig_to_an[ig_id])
@@ -333,16 +333,27 @@ class VALISJob(typing.NamedTuple):
 
     def download_images(self, group: RegistrationGroup):
 
-        images = self.get_images(group)
+        images = self.get_images(group.image_group)
 
         img: cm.ImageInstance
         for img in images:
-            img.download(self.get_image_path(group, img), override=False)
+            try:
+                img_path = str(self.get_slide_dir(group) / self.get_fname(img))
+                # TODO be smarter about that: max_size should be computed from the highest resolution used by valis (see micro_reg_px...)
+                img.dump(img_path, override=False, max_size=3000)
+                # img.download(img_path, override=False)
+            except ValueError as e:
+                raise ValueError(
+                    f"could not download image {img.path} ({img.id}) "
+                    f"for image group {group.image_group.name} "
+                    f"({group.image_group.id})"
+                ) from e
 
     def get_valis_args(self, group: RegistrationGroup):
+        slide_dir = self.get_slide_dir(group)
         valis_args = {
-            "src_dir": str(self.base_dir / str(group.image_group.id) / "slides"),
-            "dst_dir": str(self.base_dir / str(group.image_group.id) / "dst"),
+            "src_dir": str(slide_dir),
+            "dst_dir": str(slide_dir.with_name("dst")),
             "name": self.name,
             "imgs_ordered": self.parameters.image_ordering != ImageOrdering.AUTO,
             "compose_non_rigid": self.parameters.compose_non_rigid,
@@ -380,19 +391,20 @@ class VALISJob(typing.NamedTuple):
 
         return registrar
 
-    def get_image_path(self, group: RegistrationGroup, image: cm.ImageInstance) -> str:
-        fname = image.filename
+    def get_slide_dir(self, group: RegistrationGroup) -> pathlib.Path:
+        return self.base_dir / str(group.image_group.id) / "slides"
+
+    def get_fname(self, image: cm.ImageInstance) -> str:
         if self.parameters.image_ordering == ImageOrdering.CREATED:
-            fname = f"{image.created}_{image.filename}"
-        return str(self.base_dir / str(group.image_group.id) / "slides" / fname)
+            return f"{image.created}_{image.filename}"
+        return image.filename
 
     def get_image_slide(
         self,
-        group: RegistrationGroup,
         image: cm.ImageInstance,
         registrar: registration.Valis,
     ) -> registration.Slide:
-        return registrar.get_slide(self.get_image_path(group, image))
+        return registrar.get_slide(self.get_fname(image))
 
     def warp_annotation(
         self,
@@ -402,8 +414,8 @@ class VALISJob(typing.NamedTuple):
         dst_image: cm.ImageInstance,
         registrar: registration.Valis,
     ):
-        src_slide = self.get_image_slide(group, src_image, registrar)
-        dst_slide = self.get_image_slide(group, dst_image, registrar)
+        src_slide = self.get_image_slide(src_image, registrar)
+        dst_slide = self.get_image_slide(dst_image, registrar)
 
         src_geometry_bl = shapely.wkt.loads(annotation.location)
         src_geometry_tl = affine_transform(
@@ -427,20 +439,28 @@ class VALISJob(typing.NamedTuple):
             dst_image.id,
             annotation.term,
             annotation.project,
-            annotation.track,
-            annotation.slice,
         )
 
     def evaluate(self, group: RegistrationGroup, registrar: registration.Valis):
+        self.logger.info(
+            "evaluation on %d annotation groups", len(group.eval_annotation_groups)
+        )
         for an_group in group.eval_annotation_groups:
-            an_coll = cm.AnnotationCollection(
-                group=an_group.id, project=group.image_group.project
-            ).fetch()
-            if not an_coll:
+            an_coll = cm.AnnotationCollection(group=an_group.id)
+            an_coll.project = group.image_group.project
+            an_coll.showWKT = True
+            an_coll.showTerm = True
+            if an_coll.fetch() is False:
                 raise ValueError(
                     f"unable to fetch annotation collection for "
                     f"{an_group.id=} and {group.image_group.project=}"
                 )
+
+            self.logger.info(
+                "annotation group (id=%d) contains %d annotations",
+                an_group.id,
+                len(an_coll),
+            )
 
             an: cm.Annotation
             for an in an_coll:
@@ -468,7 +488,7 @@ class VALISJob(typing.NamedTuple):
                     iou_lst.append(iou_annotations(pred, an_gt))
 
                 self.logger.info(
-                    "IoU: an=%d, mean=%f, std=%f (min=%f; max=%f; n=)",
+                    "IoU: an=%d, mean=%f, std=%f (min=%f; max=%f; n=%d)",
                     an.id,
                     np.mean(iou_lst),
                     np.std(iou_lst),
@@ -482,14 +502,18 @@ class VALISJob(typing.NamedTuple):
         # TODO create AnnotationGroup / AnnotationLink for all those images
 
         annotation_collection = cm.AnnotationCollection()
+        images = self.get_images(group.image_group)
 
+        self.logger.info(
+            "making prediction on %d annotations", len(group.pred_annotations)
+        )
+        self.logger.info("these annotations will be mapped to %d images", len(images))
         for an in group.pred_annotations:
             # get source slide
             src_img = cm.ImageInstance().fetch(an.image)
             if not src_img:
                 raise ValueError(f"cannot fetch ImageInstance with id={an.image}")
 
-            images = self.get_images(group.image_group)
             img: cm.ImageInstance
             for img in images:
                 # warp annotation from to
@@ -502,8 +526,14 @@ class VALISJob(typing.NamedTuple):
             raise ValueError("could not upload all annotations")
 
     def run(self):
+        # TODO must do something: check that the run isn't blank
+
         def prog_it(progress: float, idx: int):
             return round((100.0 * float(idx) + progress) / len(self.parameters.groups))
+
+        self.logger.info("starting on %d groups", len(self.parameters.groups))
+
+        self.logger.info("parsed parameters: %s", self.parameters)
 
         for idx, group in enumerate(self.parameters.groups):
             self.update(prog_it(1, idx), f"starting on {group.image_group.id=}")
@@ -521,7 +551,35 @@ class VALISJob(typing.NamedTuple):
         self.update(100, "done")
 
 
+def _get_log_formatter():
+    return logging.Formatter(
+        "%(asctime)s.%(msecs)03d [%(name)s] [%(levelname)s] : %(message)s",
+        datefmt="%j %H:%M:%S",
+    )
+
+
+def _logger_filter(record: logging.LogRecord) -> bool:
+    if record.name == "root":
+        return True
+
+    if record.name == "cytomine.client":
+        record.name = "cyt-client"
+        return record.levelno != logging.DEBUG
+
+    return False
+
+
 def main(arguments):
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG)
+    logger.addFilter(_logger_filter)
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.NOTSET)
+    stream_handler.setFormatter(_get_log_formatter())
+    stream_handler.addFilter(_logger_filter)
+    logger.addHandler(stream_handler)
+
     with cytomine.CytomineJob.from_cli(arguments) as job:
 
         job.job.update(
@@ -534,7 +592,7 @@ def main(arguments):
         # check all parameters and fetch from Cytomine
         parameters = JobParameters.check(job.parameters)
 
-        VALISJob(job, parameters, "main", base_dir).run()
+        VALISJob(job, parameters, "main", base_dir, logger).run()
 
         job.job.update(
             status=cm.Job.TERMINATED, progress=100, status_comment="Job terminated"
