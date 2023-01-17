@@ -501,9 +501,6 @@ class VALISJob(typing.NamedTuple):
 
     def predict(self, group: RegistrationGroup, registrar: registration.Valis):
 
-        # TODO create AnnotationGroup / AnnotationLink for all those images
-
-        annotation_collection = cm.AnnotationCollection()
         images = self.get_images(group.image_group)
 
         self.logger.info(
@@ -516,16 +513,25 @@ class VALISJob(typing.NamedTuple):
             if not src_img:
                 raise ValueError(f"cannot fetch ImageInstance with id={an.image}")
 
+            annotation_collection = cm.AnnotationCollection()
+            ag = cm.AnnotationGroup(src_img.project, group.image_group.id)
+            if ag.save() is False:
+                raise ValueError(f"cannot create annotation group")
+
             img: cm.ImageInstance
             for img in images:
                 # warp annotation from to
                 warped_an = self.warp_annotation(an, group, src_img, img, registrar)
 
                 # upload
+                if (warped_an := warped_an.save()) is False:
+                    raise ValueError("could not save new annotation")
                 annotation_collection.append(warped_an)
 
-        if not annotation_collection.save():
-            raise ValueError("could not upload all annotations")
+            for an in annotation_collection:
+                al = cm.AnnotationLink(id_annotation=an.id, id_annotation_group=ag.id)
+                if al.save() is False:
+                    raise ValueError("could not create annotation link")
 
     def run(self):
         def prog_it(progress: float, idx: int):
