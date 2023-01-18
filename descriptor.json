@@ -6,7 +6,7 @@
         "type": "singularity"
     },
     "schema-version": "cytomine-0.1",
-    "command-line": "CYTOMINE_HOST CYTOMINE_PUBLIC_KEY CYTOMINE_PRIVATE_KEY CYTOMINE_ID_PROJECT CYTOMINE_ID_SOFTWARE EVAL_ANNOTATION_GROUPS EVAL_IMAGE_GROUPS DATA_ANNOTATIONS IMAGE_CROP IMAGE_ORDERING ALIGN_TOWARD_REFERENCE REGISTRATION_TYPE MICRO_REG_MAX_DIM_PX COMPOSE_NON_RIGID",
+    "command-line": "CYTOMINE_HOST CYTOMINE_PUBLIC_KEY CYTOMINE_PRIVATE_KEY CYTOMINE_ID_PROJECT CYTOMINE_ID_SOFTWARE EVAL_ANNOTATION_GROUPS EVAL_IMAGE_GROUPS DATA_ANNOTATIONS IMAGE_CROP IMAGE_ORDERING ALIGN_TOWARD_REFERENCE REGISTRATION_TYPE COMPOSE_NON_RIGID MAX_PROC_SIZE MAX_PROC_SIZE_MICRO",
     "inputs": [
         {
             "id": "cytomine_host",
@@ -61,8 +61,8 @@
             "uri": "/api/project/$currentProject$/annotationgroup.json",
             "optional": false,
             "default-value": "",
-            "value-key":"@ID",
-            "command-line-flag":"--@id"
+            "value-key": "@ID",
+            "command-line-flag": "--@id"
         },
         {
             "id": "eval_image_groups",
@@ -72,8 +72,8 @@
             "uri": "/api/project/$currentProject$/imagegroup.json",
             "optional": true,
             "default-value": "",
-            "value-key":"@ID",
-            "command-line-flag":"--@id"
+            "value-key": "@ID",
+            "command-line-flag": "--@id"
         },
         {
             "id": "data_annotations",
@@ -144,9 +144,19 @@
             "command-line-flag": "--@id"
         },
         {
-            "id": "micro_reg_max_dim_px",
-            "name": "Maximum dimension for micro registration",
-            "description": "Maximum dimension (in pixel) for any image during the micro registration step. It is an error to specify this value if REGISTRATION_TYPE is not 'micro'",
+            "id": "compose_non_rigid",
+            "name": "Compose using non rigid deformation",
+            "description": "See VALIS documentation for more info",
+            "type": "Boolean",
+            "optional": true,
+            "default-value": false,
+            "value-key": "@ID",
+            "command-line-flag": "--@id"
+        },
+        {
+            "id": "max_proc_size",
+            "name": "Maximum processing image size",
+            "description": "Maximum dimension (in pixel) for any image on which image processing and feature extraction takes place. If None, Valis's default (850) is used",
             "type": "Number",
             "integer": true,
             "optional": true,
@@ -154,12 +164,12 @@
             "command-line-flag": "--@id"
         },
         {
-            "id": "compose_non_rigid",
-            "name": "Compose using non rigid deformation",
-            "description": "See VALIS documentation for more info",
-            "type": "Boolean",
+            "id": "max_proc_size_micro",
+            "name": "Maximum processing image size (micro)",
+            "description": "Maximum dimension (in pixel) for any image on which image processing and feature extraction takes place for the micro registration. It is an error to specify this value if REGISTRATION_TYPE is not 'micro'. If None, Valis's default (3000) is used",
+            "type": "Number",
+            "integer": true,
             "optional": true,
-            "default-value": false,
             "value-key": "@ID",
             "command-line-flag": "--@id"
         }

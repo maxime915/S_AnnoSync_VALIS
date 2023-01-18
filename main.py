@@ -112,7 +112,7 @@ def get(
         return default
     if isinstance(ret, (str, int, bool, float)):
         return type_(str(ret))
-    raise TypeError(f"unsupported type: {type(ret)=!r} ({ret=!r})")
+    raise TypeError(f"unsupported type at {key=}: {type(ret)=!r} ({ret=!r})")
 
 
 @contextlib.contextmanager
@@ -142,8 +142,9 @@ class JobParameters(typing.NamedTuple):
     image_ordering: ImageOrdering
     align_toward_reference: bool
     registration_type: RegistrationType
-    micro_reg_max_dim_px: typing.Optional[int]
     compose_non_rigid: bool
+    max_proc_size: int
+    max_proc_size_micro: int
 
     groups: typing.Sequence[RegistrationGroup]
 
@@ -158,16 +159,25 @@ class JobParameters(typing.NamedTuple):
         registration_type = get(
             ns, "registration_type", RegistrationType, RegistrationType.NON_RIGID
         )
-        micro_reg_max_dim_px = get(ns, "micro_reg_max_dim_px", ei)
         compose_non_rigid = get(ns, "compose_non_rigid", eb, False)
+        max_proc_size = get(ns, "max_proc_size", ei)
+        max_proc_size_micro = get(ns, "max_proc_size_micro", ei)
 
         if (
-            micro_reg_max_dim_px is not None
+            max_proc_size_micro is not None
             and registration_type != RegistrationType.MICRO
         ):
             raise ValueError(
                 "can only specify MICRO_REG_MAX_DIM if " "REGISTRATION_TYPE is 'micro'"
             )
+
+        if max_proc_size is None:
+            max_proc_size = registration.DEFAULT_MAX_PROCESSED_IMG_SIZE
+        if max_proc_size_micro is None:
+            max_proc_size_micro = registration.DEFAULT_MAX_NON_RIGID_REG_SIZE
+            # avoid wasting space for the non-micro registration if micro is not needed
+            if registration_type != RegistrationType.MICRO:
+                max_proc_size_micro = max_proc_size
 
         ## parse Cytomine parameters
         eval_ag_ids = get(ns, "eval_annotation_groups", eil, eil(""))
@@ -254,8 +264,9 @@ class JobParameters(typing.NamedTuple):
             image_ordering=image_ordering,
             align_toward_reference=align_toward_reference,
             registration_type=registration_type,
-            micro_reg_max_dim_px=micro_reg_max_dim_px,
             compose_non_rigid=compose_non_rigid,
+            max_proc_size=max_proc_size,
+            max_proc_size_micro=max_proc_size_micro,
             groups=groups,
         )
 
@@ -360,6 +371,9 @@ class VALISJob(typing.NamedTuple):
     def download_images(self, group: RegistrationGroup):
 
         images = self.get_images(group.image_group)
+        max_size = max(
+            self.parameters.max_proc_size, self.parameters.max_proc_size_micro
+        )
 
         img: cm.ImageInstance
         for img in images:
@@ -369,8 +383,7 @@ class VALISJob(typing.NamedTuple):
                 img_path = self.thumb_path(group, img)
                 bkp = img.filename
 
-                # TODO be smarter about that: max_size should be computed from the highest resolution used by valis (see micro_reg_px...)
-                img.dump(img_path, override=False, max_size=3000)
+                img.dump(img_path, override=False, max_size=max_size)
                 img.filename = bkp
 
                 # img.download(img_path, override=False)
@@ -391,6 +404,9 @@ class VALISJob(typing.NamedTuple):
             "compose_non_rigid": self.parameters.compose_non_rigid,
             "align_to_reference": not self.parameters.align_toward_reference,
             "crop": self.parameters.image_crop.value,
+            "max_image_dim_px": self.parameters.max_proc_size,
+            "max_processed_image_dim_px": self.parameters.max_proc_size,
+            "max_non_rigid_registartion_dim_px": self.parameters.max_proc_size,
         }
 
         # skip non rigid registrations
@@ -413,10 +429,9 @@ class VALISJob(typing.NamedTuple):
 
         if self.parameters.registration_type == RegistrationType.MICRO:
             kwargs = {}
-            if self.parameters.micro_reg_max_dim_px is not None:
-                kwargs[
-                    "max_non_rigid_registartion_dim_px"
-                ] = self.parameters.micro_reg_max_dim_px
+            kwargs[
+                "max_non_rigid_registartion_dim_px"
+            ] = self.parameters.max_proc_size_micro
             with no_output():
                 registrar.register_micro(**kwargs)
 
@@ -662,7 +677,10 @@ def main(arguments):
         if any(rg.is_empty() for rg in parameters.groups):
             raise ValueError("at least one group is empty")
 
-        VALISJob(job, parameters, "main", base_dir, logger).run()
+        with contextlib.ExitStack() as e:
+            registration.init_jvm()
+            e.callback(registration.kill_jvm)
+            VALISJob(job, parameters, "main", base_dir, logger).run()
 
         job.job.update(
             status=cm.Job.TERMINATED, progress=100, status_comment="Job terminated"
