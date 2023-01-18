@@ -353,9 +353,9 @@ class VALISJob(typing.NamedTuple):
     base_dir: pathlib.Path = pathlib.Path(".")
     logger: logging.Logger = logging.getLogger("VALISJob")
 
-    def update(self, progress: int, status: str):
+    def update(self, progress: float, status: str):
         self.cytomine_job.job.update(
-            status=cm.Job.RUNNING, progress=progress, statusComment=status
+            status=cm.Job.RUNNING, progress=round(progress), statusComment=status
         )
 
     def get_images(self, group: cm.ImageGroup):
@@ -609,26 +609,36 @@ class VALISJob(typing.NamedTuple):
 
     def run(self):
         def prog_it(progress: float, idx: int):
-            return round((100.0 * float(idx) + progress) / len(self.parameters.groups))
+            "progress: float in [0., 100.0)\nidx: int in [0, len(groups))"
+            return (100.0 * float(idx) + progress) / len(self.parameters.groups)
 
         self.logger.info("starting on %d groups", len(self.parameters.groups))
 
         self.logger.info("parsed parameters: %s", self.parameters)
 
         for idx, group in enumerate(self.parameters.groups):
-            self.update(prog_it(1, idx), f"starting on {group.image_group.id=}")
+            self.update(prog_it(0.1, idx), f"starting on {group.image_group.id=}")
 
             # get images and perform registration
+            self.update(prog_it(0.2, idx), "downloading images")
             self.download_images(group)
+            self.update(prog_it(39.9, idx), "done: downloading all images")
+            
+            self.update(prog_it(40.0, idx), "registering all images")
             registrar = self.register(group)
+            self.update(prog_it(79.9, idx), "done: registering all images")
 
             # evaluation on ground truths data
+            self.update(prog_it(80.0, idx), "evaluating performances")
             self.evaluate(group, registrar)
+            self.update(prog_it(89.9, idx), "done: evaluating performances")
 
             # make some predictions
+            self.update(prog_it(90.0, idx), "making predictions")
             self.predict(group, registrar)
+            self.update(prog_it(99.9, idx), "done: making predictions")
 
-        self.update(100, "done")
+        self.update(100.0, "done")
 
 
 def _get_log_formatter():
