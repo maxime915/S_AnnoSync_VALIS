@@ -7,13 +7,13 @@ and compute an evaluation on some hand-drawn ground truths.
 import contextlib
 import enum
 import logging
-import os
 import pathlib
 import sys
 import typing
 import warnings
 from collections import defaultdict
 
+import cv2
 import cytomine
 import cytomine.models as cm
 import numpy as np
@@ -47,10 +47,12 @@ class RegistrationType(enum.Enum):
     MICRO = "micro"
 
 
-def ei(val: typing.Union[str, int]) -> int:
+def ei(val: str) -> int:
     "expect int"
     if isinstance(val, int):
         return int(val)  # make sure bool values are converted to int
+    if not isinstance(val, str):
+        raise TypeError(f"expected str, found {type(val)=}")
     if isinstance(val, str) and str(int(val)) == val:
         return int(val)
     raise ValueError(f"{val=!r} is not an int")
@@ -62,13 +64,28 @@ def eil(val: str) -> typing.List[int]:
     return [ei(v) for v in val.split(",")]
 
 
-def eb(val: typing.Union[str, bool]) -> bool:
+def eb(val: str) -> bool:
     "expect bool"
     if isinstance(val, bool):
         return val
-    if isinstance(val, str) and str(bool(val)).lower() == val.lower():
-        return bool(val)
+    if not isinstance(val, str):
+        raise TypeError(f"expected str, found {type(val)=}")
+
+    val = val.lower().strip().strip("'\"")
+    if val in ["true", "1", "yes"]:
+        return True
+    if val in ["false", "0", "no"]:
+        return False
+
     raise ValueError(f"{val=!r} is not a bool")
+
+
+def image_shape(path: str) -> typing.Tuple[int, int]:
+    img = cv2.imread(str(path))
+    if img is None:
+        raise ValueError(f"{path=!r} does not exist")
+
+    return img.shape[1::-1]
 
 
 @typing.overload
@@ -94,7 +111,7 @@ def get(
     if ret is None:
         return default
     if isinstance(ret, (str, int, bool, float)):
-        return type_(ret)
+        return type_(str(ret))
     raise TypeError(f"unsupported type: {type(ret)=!r} ({ret=!r})")
 
 
@@ -114,6 +131,9 @@ class RegistrationGroup(typing.NamedTuple):
     image_group: cm.ImageGroup
     eval_annotation_groups: typing.Set[cm.AnnotationGroup]
     pred_annotations: typing.Set[cm.Annotation]
+
+    def is_empty(self) -> bool:
+        return not self.eval_annotation_groups and not self.pred_annotations
 
 
 class JobParameters(typing.NamedTuple):
@@ -219,7 +239,7 @@ class JobParameters(typing.NamedTuple):
                 if ig_ii.group not in all_image_group:
                     image_group = cm.ImageGroup().fetch(ig_ii.group)
                     if not image_group:
-                        raise ValueError(f"could not fetch image group id={ig_ii.group}")
+                        raise ValueError(f"could not fetch image group ({ig_ii.group})")
                     all_image_group[image_group.id] = image_group
 
                 ig_to_an[ig_ii.group].add(an)
@@ -333,6 +353,10 @@ class VALISJob(typing.NamedTuple):
             raise ValueError(f"cannot fetch all images for {group.id=}")
         return images
 
+    def thumb_path(self, group: RegistrationGroup, image: cm.ImageInstance):
+        base = self.get_slide_dir(group) / self.get_fname(image)
+        return str(base.with_suffix(".jpg"))
+
     def download_images(self, group: RegistrationGroup):
 
         images = self.get_images(group.image_group)
@@ -340,9 +364,15 @@ class VALISJob(typing.NamedTuple):
         img: cm.ImageInstance
         for img in images:
             try:
-                img_path = str(self.get_slide_dir(group) / self.get_fname(img))
+                # NOTE: Cytomine modifies the filename attribute,
+                # but I need it to be constant...
+                img_path = self.thumb_path(group, img)
+                bkp = img.filename
+
                 # TODO be smarter about that: max_size should be computed from the highest resolution used by valis (see micro_reg_px...)
                 img.dump(img_path, override=False, max_size=3000)
+                img.filename = bkp
+
                 # img.download(img_path, override=False)
             except ValueError as e:
                 raise ValueError(
@@ -379,6 +409,7 @@ class VALISJob(typing.NamedTuple):
         assert rigid_registrar is not None
 
         self.logger.info("non-micro registration done")
+        self.logger.info("ref image: %s", registrar.reference_img_f)
 
         if self.parameters.registration_type == RegistrationType.MICRO:
             kwargs = {}
@@ -424,6 +455,20 @@ class VALISJob(typing.NamedTuple):
             src_geometry_bl, [1, 0, 0, -1, 0, src_image.height]
         )
 
+        src_shape = image_shape(self.thumb_path(group, src_image))
+
+        src_geometry_file_tl = affine_transform(
+            src_geometry_tl,
+            [
+                src_shape[0] / src_image.width,
+                0,
+                0,
+                src_shape[1] / src_image.height,
+                0,
+                0,
+            ],
+        )
+
         def warper_(x, y, z=None):
             assert z is None
             xy = np.stack([x, y], axis=1)
@@ -431,7 +476,21 @@ class VALISJob(typing.NamedTuple):
 
             return warped_xy[:, 0], warped_xy[:, 1]
 
-        dst_geometry_tl = transform(warper_, src_geometry_tl)
+        dst_geometry_file_tl = transform(warper_, src_geometry_file_tl)
+
+        dst_shape = image_shape(self.thumb_path(group, dst_image))
+
+        dst_geometry_tl = affine_transform(
+            dst_geometry_file_tl,
+            [
+                dst_image.width / dst_shape[0],
+                0,
+                0,
+                dst_image.height / dst_shape[1],
+                0,
+                0,
+            ],
+        )
         dst_geometry_bl = affine_transform(
             dst_geometry_tl, [1, 0, 0, -1, 0, dst_image.height]
         )
@@ -516,7 +575,7 @@ class VALISJob(typing.NamedTuple):
             annotation_collection = cm.AnnotationCollection()
             ag = cm.AnnotationGroup(src_img.project, group.image_group.id)
             if ag.save() is False:
-                raise ValueError(f"cannot create annotation group")
+                raise ValueError("cannot create annotation group")
 
             img: cm.ImageInstance
             for img in images:
@@ -597,9 +656,11 @@ def main(arguments):
 
         # check all parameters and fetch from Cytomine
         parameters = JobParameters.check(job.parameters)
-        
+
         if not parameters.groups:
             raise ValueError("cannot operate on empty data")
+        if any(rg.is_empty() for rg in parameters.groups):
+            raise ValueError("at least one group is empty")
 
         VALISJob(job, parameters, "main", base_dir, logger).run()
 
