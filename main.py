@@ -17,7 +17,9 @@ import cv2
 import cytomine
 import cytomine.models as cm
 import numpy as np
+import pandas as pd
 import shapely
+import shapely.errors
 import shapely.wkt
 from shapely.affinity import affine_transform
 from shapely.ops import transform
@@ -25,8 +27,6 @@ from valis import registration
 
 T = typing.TypeVar("T")
 U = typing.TypeVar("U")
-
-# TODO use JobData to upload a CSV file with the results
 
 
 class ImageOrdering(enum.Enum):
@@ -521,6 +521,9 @@ class VALISJob(typing.NamedTuple):
         self.logger.info(
             "evaluation on %d annotation groups", len(group.eval_annotation_groups)
         )
+
+        evaluation_rows = []
+
         for an_group in group.eval_annotation_groups:
             an_coll = cm.AnnotationCollection(group=an_group.id)
             an_coll.project = group.image_group.project
@@ -561,7 +564,30 @@ class VALISJob(typing.NamedTuple):
                     pred = self.warp_annotation(an, group, src_img, dst_img, registrar)
 
                     # IoU between gt and pred
-                    iou_lst.append(iou_annotations(pred, an_gt))
+                    try:
+                        iou = iou_annotations(pred, an_gt)
+                        iou_lst.append(iou)
+
+                        evaluation_rows.append(
+                            (
+                                an_group.id,
+                                an.id,
+                                src_img.id,
+                                an_gt.id,
+                                dst_img.id,
+                                iou,
+                            )
+                        )
+                    except shapely.errors.ShapelyError as e:
+                        self.logger.error(
+                            "unable to compute IoU between an=%d (img=%d) and "
+                            "an_gt=%d (img_gt=%d)",
+                            an.id,
+                            src_img.id,
+                            an_gt.id,
+                            dst_img.id,
+                        )
+                        self.logger.exception(e)
 
                 self.logger.info(
                     "IoU: an=%d, mean=%f, std=%f (min=%f; max=%f; n=%d)",
@@ -572,6 +598,28 @@ class VALISJob(typing.NamedTuple):
                     np.max(iou_lst),
                     len(iou_lst),
                 )
+
+        filename = group.image_group.name + f"-{group.image_group.id}-iou.csv"
+        path = str(self.base_dir / filename)
+        pd.DataFrame(
+            evaluation_rows,
+            columns=[
+                "annotation_group",
+                "annotation_src",
+                "image_src",
+                "annotation_gt",
+                "image_gt",
+                "iou",
+            ],
+        ).to_csv(path)
+
+        job_data = cm.JobData(
+            id_job=self.cytomine_job.job.id,
+            key=f"IoU ({group.image_group.id})",
+            filename=filename,
+        )
+        job_data = job_data.save()
+        job_data.upload(path)
 
     def predict(self, group: RegistrationGroup, registrar: registration.Valis):
 
