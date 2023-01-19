@@ -518,6 +518,10 @@ class VALISJob(typing.NamedTuple):
         )
 
     def evaluate(self, group: RegistrationGroup, registrar: registration.Valis):
+        if not group.eval_annotation_groups:
+            self.logger.info("no annotation group to evaluate on, for imagegroup=%d", group.image_group.id)
+            return
+
         self.logger.info(
             "evaluation on %d annotation groups", len(group.eval_annotation_groups)
         )
