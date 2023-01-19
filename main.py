@@ -23,6 +23,7 @@ import shapely.errors
 import shapely.wkt
 from shapely.affinity import affine_transform
 from shapely.ops import transform
+from shapely.validation import make_valid
 from valis import registration
 
 T = typing.TypeVar("T")
@@ -511,7 +512,7 @@ class VALISJob(typing.NamedTuple):
         )
 
         return cm.Annotation(
-            shapely.wkt.dumps(dst_geometry_bl),
+            shapely.wkt.dumps(make_valid(dst_geometry_bl)),
             dst_image.id,
             annotation.term,
             annotation.project,
@@ -519,7 +520,10 @@ class VALISJob(typing.NamedTuple):
 
     def evaluate(self, group: RegistrationGroup, registrar: registration.Valis):
         if not group.eval_annotation_groups:
-            self.logger.info("no annotation group to evaluate on, for imagegroup=%d", group.image_group.id)
+            self.logger.info(
+                "no annotation group to evaluate on, for imagegroup=%d",
+                group.image_group.id,
+            )
             return
 
         self.logger.info(
@@ -570,38 +574,25 @@ class VALISJob(typing.NamedTuple):
                     # IoU between gt and pred
                     try:
                         iou = iou_annotations(pred, an_gt)
-                        iou_lst.append(iou)
-
-                        evaluation_rows.append(
-                            (
-                                an_group.id,
-                                an.id,
-                                src_img.id,
-                                an_gt.id,
-                                dst_img.id,
-                                iou,
-                            )
-                        )
                     except shapely.errors.ShapelyError as e:
                         self.logger.error(
                             "unable to compute IoU between an=%d (img=%d) and "
-                            "an_gt=%d (img_gt=%d)",
+                            "an_gt=%d (img_gt=%d) "
+                            "valid an: %s, valid pred: %s, valid gt: %s",
                             an.id,
                             src_img.id,
                             an_gt.id,
                             dst_img.id,
+                            shapely.wkt.loads(an.location).is_valid,
+                            shapely.wkt.loads(pred.location).is_valid,
+                            shapely.wkt.loads(an_gt.location).is_valid,
                         )
                         self.logger.exception(e)
+                        continue
 
-                self.logger.info(
-                    "IoU: an=%d, mean=%f, std=%f (min=%f; max=%f; n=%d)",
-                    an.id,
-                    np.mean(iou_lst),
-                    np.std(iou_lst),
-                    np.min(iou_lst),
-                    np.max(iou_lst),
-                    len(iou_lst),
-                )
+                    evaluation_rows.append(
+                        (an_group.id, an.id, src_img.id, an_gt.id, dst_img.id, iou)
+                    )
 
         filename = group.image_group.name + f"-{group.image_group.id}-iou.csv"
         path = str(self.base_dir / filename)
@@ -675,7 +666,7 @@ class VALISJob(typing.NamedTuple):
             self.update(prog_it(0.2, idx), "downloading images")
             self.download_images(group)
             self.update(prog_it(39.9, idx), "done: downloading all images")
-            
+
             self.update(prog_it(40.0, idx), "registering all images")
             registrar = self.register(group)
             self.update(prog_it(79.9, idx), "done: registering all images")
