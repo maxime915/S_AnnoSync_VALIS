@@ -206,7 +206,7 @@ class JobParameters(typing.NamedTuple):
 
             # get all image group before the registration
             ig_id: int = ag.imageGroup
-            ig = cm.ImageGroup().fetch(ig_id)
+            ig = _fetch_image_group(ig_id)
             if not ig:
                 raise ValueError(f"could not fetch ImageGroup with {ig_id=!r}")
 
@@ -217,7 +217,7 @@ class JobParameters(typing.NamedTuple):
         for ig_id in eval_ig_ids:
             if ig_id in all_image_group:
                 continue
-            ig = cm.ImageGroup().fetch(ig_id)
+            ig = _fetch_image_group(ig_id)
             all_image_group[ig_id] = ig
 
             # fetch all annotation group in the image group !
@@ -250,7 +250,7 @@ class JobParameters(typing.NamedTuple):
             for ig_ii in ig_ii_c:
 
                 if ig_ii.group not in all_image_group:
-                    image_group = cm.ImageGroup().fetch(ig_ii.group)
+                    image_group = _fetch_image_group(ig_ii.group)
                     if not image_group:
                         raise ValueError(f"could not fetch image group ({ig_ii.group})")
                     all_image_group[image_group.id] = image_group
@@ -318,9 +318,10 @@ def pretty_repr(o: typing.Any) -> str:
 
 
 _img_col_cache: typing.Dict[int, cm.ImageInstanceCollection] = {}
+_img_cache: typing.Dict[int, cm.ImageInstance] = {}
 
 
-def _fetch_images(
+def _fetch_image_group(
     image_group: int,
 ) -> typing.Union[cm.ImageInstanceCollection, typing.Literal[False]]:
     "caching only successful responses"
@@ -331,6 +332,18 @@ def _fetch_images(
     if img_col:
         _img_col_cache[image_group] = img_col
     return img_col
+
+def _fetch_image(
+    image: int,
+) -> typing.Union[cm.ImageInstance, typing.Literal[False]]:
+    if ret := _img_cache.get(image, False):
+        return ret
+    
+    img = cm.ImageInstance().fetch(image)
+    if img:
+        _img_cache[image] = img
+    return img
+
 
 
 def iou_annotations(
@@ -377,7 +390,7 @@ class VALISJob(typing.NamedTuple):
         )
 
     def get_images(self, group: cm.ImageGroup):
-        images = _fetch_images(group.id)
+        images = _fetch_image_group(group.id)
         if not images:
             raise ValueError(f"cannot fetch all images for {group.id=}")
         return images
@@ -570,7 +583,7 @@ class VALISJob(typing.NamedTuple):
 
             an: cm.Annotation
             for an in an_coll:
-                src_img = cm.ImageInstance().fetch(an.image)
+                src_img = _fetch_image(an.image)
                 if not src_img:
                     raise ValueError(f"cannot fetch ImageInstance with id={an.image}")
 
@@ -584,7 +597,7 @@ class VALISJob(typing.NamedTuple):
                     if an_gt.image == an.image:
                         continue
 
-                    dst_img = cm.ImageInstance().fetch(an_gt.image)
+                    dst_img = _fetch_image(an_gt.image)
                     if not dst_img:
                         raise ValueError(
                             f"cannot fetch ImageInstance with id={an_gt.image}"
@@ -672,7 +685,7 @@ class VALISJob(typing.NamedTuple):
         self.logger.info("these annotations will be mapped to %d images", len(images))
         for an in group.pred_annotations:
             # get source slide
-            src_img = cm.ImageInstance().fetch(an.image)
+            src_img = _fetch_image(an.image)
             if not src_img:
                 raise ValueError(f"cannot fetch ImageInstance with id={an.image}")
 
