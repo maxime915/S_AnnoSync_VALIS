@@ -7,6 +7,7 @@ and compute an evaluation on some hand-drawn ground truths.
 import contextlib
 import enum
 import logging
+import os
 import pathlib
 import sys
 import typing
