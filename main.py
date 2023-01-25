@@ -330,11 +330,24 @@ def pretty_repr(o: Any) -> str:
     return f"{o!r}"
 
 
+_img_group_cache: Dict[int, cm.ImageGroup] = {}
 _img_col_cache: Dict[int, cm.ImageInstanceCollection] = {}
 _img_cache: Dict[int, cm.ImageInstance] = {}
 
 
 def _fetch_image_group(
+    image_group: int,
+) -> Union[cm.ImageGroup, Literal[False]]:
+    if ret := _img_group_cache.get(image_group, False):
+        return ret
+    
+    img_group = cm.ImageGroup().fetch(image_group)
+    if img_group:
+        _img_group_cache[image_group] = img_group
+    return img_group
+
+
+def _fetch_image_col(
     image_group: int,
 ) -> Union[cm.ImageInstanceCollection, Literal[False]]:
     "caching only successful responses"
@@ -403,7 +416,7 @@ class VALISJob(NamedTuple):
         )
 
     def get_images(self, group: cm.ImageGroup):
-        images = _fetch_image_group(group.id)
+        images = _fetch_image_col(group.id)
         if not images:
             raise ValueError(f"cannot fetch all images for {group.id=}")
         return images
