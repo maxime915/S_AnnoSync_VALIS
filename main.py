@@ -10,9 +10,26 @@ import logging
 import os
 import pathlib
 import sys
-import typing
 import warnings
 from collections import defaultdict
+from typing import (
+    Any,
+    Callable,
+    DefaultDict,
+    Dict,
+    Iterable,
+    List,
+    Literal,
+    Mapping,
+    NamedTuple,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    TypeVar,
+    Union,
+    overload,
+)
 
 import cv2
 import cytomine
@@ -28,8 +45,8 @@ from shapely.ops import transform
 from shapely.validation import make_valid
 from valis import registration
 
-T = typing.TypeVar("T")
-U = typing.TypeVar("U")
+T = TypeVar("T")
+U = TypeVar("U")
 
 
 class ImageOrdering(enum.Enum):
@@ -61,7 +78,7 @@ def ei(val: str) -> int:
     raise ValueError(f"{val=!r} is not an int")
 
 
-def eil(val: str) -> typing.List[int]:
+def eil(val: str) -> List[int]:
     if not val.strip():
         return []  # allow empty lists
     return [ei(v) for v in val.split(",")]
@@ -83,7 +100,7 @@ def eb(val: str) -> bool:
     raise ValueError(f"{val=!r} is not a bool")
 
 
-def image_shape(path: str) -> typing.Tuple[int, int]:
+def image_shape(path: str) -> Tuple[int, int]:
     img = cv2.imread(str(path))
     if img is None:
         raise ValueError(f"{path=!r} does not exist")
@@ -91,23 +108,21 @@ def image_shape(path: str) -> typing.Tuple[int, int]:
     return img.shape[1::-1]
 
 
-@typing.overload
-def get(
-    namespace, key: str, type_: typing.Callable[[str], T], default: U
-) -> typing.Union[T, U]:
+@overload
+def get(namespace, key: str, type_: Callable[[str], T], default: U) -> Union[T, U]:
     ...
 
 
-@typing.overload
-def get(namespace, key: str, type_: typing.Callable[[str], T]) -> typing.Union[T, None]:
+@overload
+def get(namespace, key: str, type_: Callable[[str], T]) -> Union[T, None]:
     ...
 
 
 def get(
     namespace,
     key: str,
-    type_: typing.Callable[[str], T],
-    default: typing.Optional[U] = None,
+    type_: Callable[[str], T],
+    default: Optional[U] = None,
 ):
     "reads a parameter from the Namespace object, and cast it to the right type"
     ret = getattr(namespace, key, None)
@@ -129,17 +144,17 @@ def no_output():
         pass
 
 
-class RegistrationGroup(typing.NamedTuple):
+class RegistrationGroup(NamedTuple):
     "group of images on which there is evaluation and/or prediction tasks"
     image_group: cm.ImageGroup
-    eval_annotation_groups: typing.Set[cm.AnnotationGroup]
-    pred_annotations: typing.Set[cm.Annotation]
+    eval_annotation_groups: Set[cm.AnnotationGroup]
+    pred_annotations: Set[cm.Annotation]
 
     def is_empty(self) -> bool:
         return not self.eval_annotation_groups and not self.pred_annotations
 
 
-class JobParameters(typing.NamedTuple):
+class JobParameters(NamedTuple):
     "parsed parameters for the job"
     image_crop: ImageCrop
     image_ordering: ImageOrdering
@@ -147,9 +162,9 @@ class JobParameters(typing.NamedTuple):
     registration_type: RegistrationType
     compose_non_rigid: bool
     max_proc_size: int
-    max_proc_size_micro: int
+    micro_max_proc_size: int
 
-    groups: typing.Sequence[RegistrationGroup]
+    groups: Sequence[RegistrationGroup]
 
     @staticmethod
     def check(ns):
@@ -164,10 +179,10 @@ class JobParameters(typing.NamedTuple):
         )
         compose_non_rigid = get(ns, "compose_non_rigid", eb, False)
         max_proc_size = get(ns, "max_proc_size", ei)
-        max_proc_size_micro = get(ns, "max_proc_size_micro", ei)
+        micro_max_proc_size = get(ns, "micro_max_proc_size", ei)
 
         if (
-            max_proc_size_micro is not None
+            micro_max_proc_size is not None
             and registration_type != RegistrationType.MICRO
         ):
             raise ValueError(
@@ -176,11 +191,11 @@ class JobParameters(typing.NamedTuple):
 
         if max_proc_size is None:
             max_proc_size = registration.DEFAULT_MAX_PROCESSED_IMG_SIZE
-        if max_proc_size_micro is None:
-            max_proc_size_micro = registration.DEFAULT_MAX_NON_RIGID_REG_SIZE
+        if micro_max_proc_size is None:
+            micro_max_proc_size = registration.DEFAULT_MAX_NON_RIGID_REG_SIZE
             # avoid wasting space for the non-micro registration if micro is not needed
             if registration_type != RegistrationType.MICRO:
-                max_proc_size_micro = max_proc_size
+                micro_max_proc_size = max_proc_size
 
         ## parse Cytomine parameters
         eval_ag_ids = get(ns, "eval_annotation_groups", eil, eil(""))
@@ -188,12 +203,10 @@ class JobParameters(typing.NamedTuple):
         pred_an_ids = get(ns, "data_annotations", eil, eil(""))
 
         # caches to avoid duplicate API calls
-        all_image_group: typing.Dict[int, cm.ImageGroup] = {}
-        all_annotation_group: typing.Dict[int, cm.AnnotationGroup] = {}
-        ig_to_ag: typing.DefaultDict[int, typing.Set[cm.AnnotationGroup]] = defaultdict(
-            set
-        )
-        ig_to_an: typing.DefaultDict[int, typing.Set[cm.Annotation]] = defaultdict(set)
+        all_image_group: Dict[int, cm.ImageGroup] = {}
+        all_annotation_group: Dict[int, cm.AnnotationGroup] = {}
+        ig_to_ag: DefaultDict[int, Set[cm.AnnotationGroup]] = defaultdict(set)
+        ig_to_an: DefaultDict[int, Set[cm.Annotation]] = defaultdict(set)
 
         # fetch all annotation groups
         for ag_id in eval_ag_ids:
@@ -269,7 +282,7 @@ class JobParameters(typing.NamedTuple):
             registration_type=registration_type,
             compose_non_rigid=compose_non_rigid,
             max_proc_size=max_proc_size,
-            max_proc_size_micro=max_proc_size_micro,
+            micro_max_proc_size=micro_max_proc_size,
             groups=groups,
         )
 
@@ -288,7 +301,7 @@ class JobParameters(typing.NamedTuple):
         return pretty_repr(asdict)
 
 
-def pretty_repr(o: typing.Any) -> str:
+def pretty_repr(o: Any) -> str:
     if isinstance(o, (int, float, str, type(None))):
         return f"{o!r}"
 
@@ -299,11 +312,11 @@ def pretty_repr(o: typing.Any) -> str:
     if isinstance(o, tuple) and hasattr(o, "_asdict"):
         return f"{o!r}"
 
-    if isinstance(o, typing.Mapping):
+    if isinstance(o, Mapping):
         inner = ", ".join(pretty_repr(k) + ":" + pretty_repr(v) for k, v in o.items())
         return "{" + inner + "}"
 
-    if isinstance(o, typing.Iterable):
+    if isinstance(o, Iterable):
         return "[" + ", ".join(pretty_repr(s) for s in o) + "]"
 
     if hasattr(o, "__dict__"):
@@ -317,13 +330,13 @@ def pretty_repr(o: typing.Any) -> str:
     return f"{o!r}"
 
 
-_img_col_cache: typing.Dict[int, cm.ImageInstanceCollection] = {}
-_img_cache: typing.Dict[int, cm.ImageInstance] = {}
+_img_col_cache: Dict[int, cm.ImageInstanceCollection] = {}
+_img_cache: Dict[int, cm.ImageInstance] = {}
 
 
 def _fetch_image_group(
     image_group: int,
-) -> typing.Union[cm.ImageInstanceCollection, typing.Literal[False]]:
+) -> Union[cm.ImageInstanceCollection, Literal[False]]:
     "caching only successful responses"
     if ret := _img_col_cache.get(image_group, False):
         return ret
@@ -333,17 +346,17 @@ def _fetch_image_group(
         _img_col_cache[image_group] = img_col
     return img_col
 
+
 def _fetch_image(
     image: int,
-) -> typing.Union[cm.ImageInstance, typing.Literal[False]]:
+) -> Union[cm.ImageInstance, Literal[False]]:
     if ret := _img_cache.get(image, False):
         return ret
-    
+
     img = cm.ImageInstance().fetch(image)
     if img:
         _img_cache[image] = img
     return img
-
 
 
 def iou_annotations(
@@ -376,7 +389,7 @@ def tre_annotations(
     return geometry_l.distance(geometry_r)
 
 
-class VALISJob(typing.NamedTuple):
+class VALISJob(NamedTuple):
 
     cytomine_job: cytomine.CytomineJob
     parameters: JobParameters
@@ -403,7 +416,7 @@ class VALISJob(typing.NamedTuple):
 
         images = self.get_images(group.image_group)
         max_size = max(
-            self.parameters.max_proc_size, self.parameters.max_proc_size_micro
+            self.parameters.max_proc_size, self.parameters.micro_max_proc_size
         )
 
         img: cm.ImageInstance
@@ -462,7 +475,7 @@ class VALISJob(typing.NamedTuple):
             kwargs = {}
             kwargs[
                 "max_non_rigid_registartion_dim_px"
-            ] = self.parameters.max_proc_size_micro
+            ] = self.parameters.micro_max_proc_size
             with no_output():
                 registrar.register_micro(**kwargs)
 

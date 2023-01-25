@@ -6,7 +6,7 @@
         "type": "singularity"
     },
     "schema-version": "cytomine-0.1",
-    "command-line": "CYTOMINE_HOST CYTOMINE_PUBLIC_KEY CYTOMINE_PRIVATE_KEY CYTOMINE_ID_PROJECT CYTOMINE_ID_SOFTWARE EVAL_ANNOTATION_GROUPS EVAL_IMAGE_GROUPS DATA_ANNOTATIONS IMAGE_CROP IMAGE_ORDERING ALIGN_TOWARD_REFERENCE REGISTRATION_TYPE COMPOSE_NON_RIGID MAX_PROC_SIZE MAX_PROC_SIZE_MICRO",
+    "command-line": "CYTOMINE_HOST CYTOMINE_PUBLIC_KEY CYTOMINE_PRIVATE_KEY CYTOMINE_ID_PROJECT CYTOMINE_ID_SOFTWARE EVAL_ANNOTATION_GROUPS EVAL_IMAGE_GROUPS DATA_ANNOTATIONS IMAGE_CROP IMAGE_ORDERING ALIGN_TOWARD_REFERENCE REGISTRATION_TYPE COMPOSE_NON_RIGID MAX_PROC_SIZE MICRO_MAX_PROC_SIZE",
     "inputs": [
         {
             "id": "cytomine_host",
@@ -59,6 +59,8 @@
             "description": "These annotation groups are used to compute accuracy metrics for the registration algorithm.",
             "type": "ListDomain",
             "uri": "/api/project/$currentProject$/annotationgroup.json",
+            "uri-print-attribute": "created",
+            "uri-sort-attribute": "created",
             "optional": true,
             "default-value": "",
             "value-key": "@ID",
@@ -70,6 +72,8 @@
             "description": "All annotation groups of the given image groups are added to the previous image groups for the evaluation.",
             "type": "ListDomain",
             "uri": "/api/project/$currentProject$/imagegroup.json",
+            "uri-print-attribute": "name",
+            "uri-sort-attribute": "name",
             "optional": true,
             "default-value": "",
             "value-key": "@ID",
@@ -160,16 +164,18 @@
             "type": "Number",
             "integer": true,
             "optional": true,
+            "default-value": 850,
             "value-key": "@ID",
             "command-line-flag": "--@id"
         },
         {
-            "id": "max_proc_size_micro",
+            "id": "micro_max_proc_size",
             "name": "Maximum processing image size (micro)",
             "description": "Maximum dimension (in pixel) for any image on which image processing and feature extraction takes place for the micro registration. It is an error to specify this value if REGISTRATION_TYPE is not 'micro'. If None, Valis's default (3000) is used",
             "type": "Number",
             "integer": true,
             "optional": true,
+            "default-value": 3000,
             "value-key": "@ID",
             "command-line-flag": "--@id"
         }
