@@ -181,14 +181,6 @@ class JobParameters(NamedTuple):
         max_proc_size = get(ns, "max_proc_size", ei)
         micro_max_proc_size = get(ns, "micro_max_proc_size", ei)
 
-        if (
-            micro_max_proc_size is not None
-            and registration_type != RegistrationType.MICRO
-        ):
-            raise ValueError(
-                "can only specify MICRO_REG_MAX_DIM if " "REGISTRATION_TYPE is 'micro'"
-            )
-
         if max_proc_size is None:
             max_proc_size = registration.DEFAULT_MAX_PROCESSED_IMG_SIZE
         if micro_max_proc_size is None:
@@ -196,6 +188,12 @@ class JobParameters(NamedTuple):
             # avoid wasting space for the non-micro registration if micro is not needed
             if registration_type != RegistrationType.MICRO:
                 micro_max_proc_size = max_proc_size
+
+        if max_proc_size <= 0:
+            raise ValueError(f"{max_proc_size=} <= 0")
+
+        if micro_max_proc_size < max_proc_size:
+            raise ValueError(f"{micro_max_proc_size=} < {max_proc_size=}")
 
         ## parse Cytomine parameters
         eval_ag_ids = get(ns, "eval_annotation_groups", eil, eil(""))
