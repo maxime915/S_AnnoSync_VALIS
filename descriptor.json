@@ -80,19 +80,6 @@
             "command-line-flag": "--@id"
         },
         {
-            "id": "data_annotations",
-            "name": "Annotation to translate",
-            "description": "These annotations will be translated on all images of the same image group they are defined in.",
-            "type": "ListDomain",
-            "uri": "/api/annotation.json?project=$currentProject$",
-            "uri-print-attribute": "id",
-            "uri-sort-attribute": "id",
-            "optional": true,
-            "default-value": "",
-            "value-key": "@ID",
-            "command-line-flag": "--@id"
-        },
-        {
             "id": "image_crop",
             "name": "Cropping modes for all images [see info]",
             "description": "How to define the registration domain relative to all images. One of: 'reference' (defines the reference image as the domain), 'overlap' (means the common area only), 'all' (means the smallest area to include all images).",
@@ -154,6 +141,19 @@
             "type": "Boolean",
             "optional": true,
             "default-value": false,
+            "value-key": "@ID",
+            "command-line-flag": "--@id"
+        },
+        {
+            "id": "data_annotations",
+            "name": "Annotation to map",
+            "description": "These annotations will be mapped on all images of the same image group they are defined in.",
+            "type": "ListDomain",
+            "uri": "/api/annotation.json?project=$currentProject$",
+            "uri-print-attribute": "id",
+            "uri-sort-attribute": "id",
+            "optional": true,
+            "default-value": "",
             "value-key": "@ID",
             "command-line-flag": "--@id"
         },

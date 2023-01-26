@@ -421,7 +421,7 @@ class VALISJob(NamedTuple):
 
     def thumb_path(self, group: RegistrationGroup, image: cm.ImageInstance):
         base = self.get_slide_dir(group) / self.get_fname(image)
-        return str(base.with_suffix(".jpg"))
+        return str(base.with_suffix(".png"))
 
     def download_images(self, group: RegistrationGroup):
 
@@ -433,15 +433,19 @@ class VALISJob(NamedTuple):
         img: cm.ImageInstance
         for img in images:
             try:
-                # NOTE: Cytomine modifies the filename attribute,
-                # but I need it to be constant...
                 img_path = self.thumb_path(group, img)
-                bkp = img.filename
 
-                img.dump(img_path, override=False, max_size=max_size)
-                img.filename = bkp
+                target = min(max_size, max(img.width, img.height))
+                img.window(0, 0, img.width, img.height, img_path, override=True, max_size=target)
 
-                # img.download(img_path, override=False)
+                actual = max(image_shape(img_path))
+                if actual != target:
+                    self.logger.error("id: %s, path: %s", img.id, img_path)
+                    self.logger.error("Cytomine image shape: %s", (img.width, img.height))
+                    self.logger.error("requested max_size: %s", max_size)
+                    self.logger.error("downloaded shape: %s", image_shape(img_path))
+                    raise ValueError("downloaded image doesn't have the right size")
+
             except ValueError as e:
                 raise ValueError(
                     f"could not download image {img.path} ({img.id}) "
