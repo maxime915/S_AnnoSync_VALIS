@@ -109,6 +109,39 @@ def image_shape(path: str) -> Tuple[int, int]:
     return img.shape[1::-1]
 
 
+def fix_grayscale(path: str):
+    "save an RGB grayscale image as single channel"
+
+    img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+    if img is None:
+        raise ValueError(f"{path=!r} does not exist")
+
+    # encoded as grayscale: no need to worry about it
+    if img.shape[-1] == 1:
+        return
+
+    if img.shape[-1] != 3:
+        warnings.warn(
+            f"fix grayscale {path=!r}: expected RGB, "
+            f"found {img.shape[-1]} channels. Skipping"
+        )
+        return
+
+    # compute the median value for each channel
+    channel_median = np.median(img.reshape((-1, img.shape[-1])), axis=0)
+    channel_peak_diff = channel_median.max() - channel_median.min()
+
+    val_range = img.max() - img.min()
+
+    # actual color image
+    if channel_peak_diff > 0.05 * val_range:
+        return
+
+    # store as grayscale
+    pathlib.Path(path).unlink()
+    cv2.imwrite(path, cv2.cvtColor(img, cv2.COLOR_BGR2GRAY))
+
+
 @overload
 def get(namespace, key: str, type_: Callable[[str], T], default: U) -> Union[T, U]:
     ...
@@ -167,6 +200,7 @@ class JobParameters(NamedTuple):
 
     groups: Sequence[RegistrationGroup]
     whitelist_ids: List[int]
+    grayscale_images: List[int]
 
     @staticmethod
     def check(ns):
@@ -202,6 +236,7 @@ class JobParameters(NamedTuple):
         eval_ig_ids = get(ns, "eval_image_groups", eil, eil(""))
         pred_an_ids = get(ns, "data_annotations", eil, eil(""))
         whitelist_ids = get(ns, "image_whitelist", eil, eil(""))
+        grayscale_ids = get(ns, "fix_grayscale_images", eil, eil(""))
 
         # caches to avoid duplicate API calls
         all_image_group: Dict[int, cm.ImageGroup] = {}
@@ -281,6 +316,10 @@ class JobParameters(NamedTuple):
         for img_id in whitelist_ids:
             if img_id not in all_image_ids:
                 warnings.warn(f"whitelisted {img_id=} not given in any groups")
+        for img_id in grayscale_ids:
+            if img_id not in all_image_ids:
+                warnings.warn(f"grayscale {img_id=} not given in any groups")
+
         groups = [
             RegistrationGroup(ig, ig_to_ag[ig_id], ig_to_an[ig_id])
             for ig_id, ig in all_image_group.items()
@@ -296,6 +335,7 @@ class JobParameters(NamedTuple):
             micro_max_proc_size=micro_max_proc_size,
             groups=groups,
             whitelist_ids=whitelist_ids,
+            grayscale_images=grayscale_ids,
         )
 
     def __repr__(self) -> str:
@@ -468,6 +508,10 @@ class VALISJob(NamedTuple):
                     self.logger.error("requested max_size: %s", max_size)
                     self.logger.error("downloaded shape: %s", image_shape(img_path))
                     raise ValueError("downloaded image doesn't have the right size")
+
+                # make grayscale image single channel
+                if img.id in self.parameters.grayscale_images:
+                    fix_grayscale(img_path)
 
             except ValueError as e:
                 raise ValueError(
@@ -650,7 +694,7 @@ class VALISJob(NamedTuple):
                 for an_gt in an_coll:
                     if an_gt.image == an.image:
                         continue
-                    
+
                     if not self.allow(an_gt.image):
                         continue
 

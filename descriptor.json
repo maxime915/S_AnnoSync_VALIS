@@ -6,7 +6,7 @@
         "type": "singularity"
     },
     "schema-version": "cytomine-0.1",
-    "command-line": "CYTOMINE_HOST CYTOMINE_PUBLIC_KEY CYTOMINE_PRIVATE_KEY CYTOMINE_ID_PROJECT CYTOMINE_ID_SOFTWARE EVAL_ANNOTATION_GROUPS EVAL_IMAGE_GROUPS IMAGE_WHITELIST DATA_ANNOTATIONS IMAGE_CROP IMAGE_ORDERING ALIGN_TOWARD_REFERENCE REGISTRATION_TYPE COMPOSE_NON_RIGID MAX_PROC_SIZE MICRO_MAX_PROC_SIZE",
+    "command-line": "CYTOMINE_HOST CYTOMINE_PUBLIC_KEY CYTOMINE_PRIVATE_KEY CYTOMINE_ID_PROJECT CYTOMINE_ID_SOFTWARE EVAL_ANNOTATION_GROUPS EVAL_IMAGE_GROUPS IMAGE_WHITELIST FIX_GRAYSCALE_IMAGES DATA_ANNOTATIONS IMAGE_CROP IMAGE_ORDERING ALIGN_TOWARD_REFERENCE REGISTRATION_TYPE COMPOSE_NON_RIGID MAX_PROC_SIZE MICRO_MAX_PROC_SIZE",
     "inputs": [
         {
             "id": "cytomine_host",
@@ -83,6 +83,19 @@
             "id": "image_whitelist",
             "name": "Image whitelist",
             "description": "If set, only selected images are considered for evaluation and prediction of annotations",
+            "type": "ListDomain",
+            "uri": "/api/project/$currentProject$/imageinstance.json",
+            "uri-print-attribute": "filename",
+            "uri-sort-attribute": "filename",
+            "optional": true,
+            "default-value": "",
+            "value-key": "@ID",
+            "command-line-flag": "--@id"
+        },
+        {
+            "id": "fix_grayscale_images",
+            "name": "Grayscale images to fix [see info]",
+            "description": "VALIS can wrongly assume that grayscale RGB images are not grayscale and break the processing of some images. **This is only recommended for light images.**",
             "type": "ListDomain",
             "uri": "/api/project/$currentProject$/imageinstance.json",
             "uri-print-attribute": "filename",
