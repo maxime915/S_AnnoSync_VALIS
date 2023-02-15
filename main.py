@@ -299,6 +299,8 @@ class JobParameters(NamedTuple):
                         continue
                     ac = cm.AnnotationCollection()
                     ac.image = img.id
+                    ac.showWKT = True
+                    ac.showTerm = True
                     ac = ac.fetch()
                     
                     if ac is False:
