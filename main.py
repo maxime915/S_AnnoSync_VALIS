@@ -835,7 +835,7 @@ def main(arguments):
             status=cm.Job.RUNNING, progress=0, status_comment="Initialization"
         )
 
-        base_dir = pathlib.Path(f"./valis-slides-{job.software.id}")
+        base_dir = pathlib.Path(f"./valis-slides-{job.job.id}")
         base_dir.mkdir(exist_ok=True, parents=False)
 
         # check all parameters and fetch from Cytomine
