@@ -79,7 +79,8 @@ def ei(val: str) -> int:
 
 
 def eil(val: str) -> List[int]:
-    if not val.strip():
+    val = val.strip(" '\"")
+    if not val:
         return []  # allow empty lists
     return [ei(v) for v in val.split(",")]
 
@@ -91,7 +92,7 @@ def eb(val: str) -> bool:
     if not isinstance(val, str):
         raise TypeError(f"expected str, found {type(val)=}")
 
-    val = val.lower().strip().strip("'\"")
+    val = val.lower().strip(" '\"")
     if val in ["true", "1", "yes"]:
         return True
     if val in ["false", "0", "no"]:
@@ -101,7 +102,7 @@ def eb(val: str) -> bool:
 
 
 def image_shape(path: str) -> Tuple[int, int]:
-    img = cv2.imread(str(path))
+    img = cv2.imread(path)
     if img is None:
         raise ValueError(f"{path=!r} does not exist")
 
@@ -165,6 +166,7 @@ class JobParameters(NamedTuple):
     micro_max_proc_size: int
 
     groups: Sequence[RegistrationGroup]
+    whitelist_ids: List[int]
 
     @staticmethod
     def check(ns):
@@ -199,6 +201,7 @@ class JobParameters(NamedTuple):
         eval_ag_ids = get(ns, "eval_annotation_groups", eil, eil(""))
         eval_ig_ids = get(ns, "eval_image_groups", eil, eil(""))
         pred_an_ids = get(ns, "data_annotations", eil, eil(""))
+        whitelist_ids = get(ns, "image_whitelist", eil, eil(""))
 
         # caches to avoid duplicate API calls
         all_image_group: Dict[int, cm.ImageGroup] = {}
@@ -251,6 +254,9 @@ class JobParameters(NamedTuple):
             if an is False:
                 raise ValueError(f"cannot fetch annotation with id={an_id}")
 
+            if whitelist_ids and an.image not in whitelist_ids:
+                raise ValueError(f"{an.image=} is not in {whitelist_ids=}")
+
             ig_ii_c = cm.ImageGroupImageInstanceCollection().fetch_with_filter(
                 "imageinstance", an.image
             )
@@ -268,6 +274,13 @@ class JobParameters(NamedTuple):
 
                 ig_to_an[ig_ii.group].add(an)
 
+        all_image_ids: Set[int] = set()
+        for ig_id in all_image_group:
+            for img in _fetch_image_col(ig_id):
+                all_image_ids.add(img.id)
+        for img_id in whitelist_ids:
+            if img_id not in all_image_ids:
+                warnings.warn(f"whitelisted {img_id=} not given in any groups")
         groups = [
             RegistrationGroup(ig, ig_to_ag[ig_id], ig_to_an[ig_id])
             for ig_id, ig in all_image_group.items()
@@ -282,6 +295,7 @@ class JobParameters(NamedTuple):
             max_proc_size=max_proc_size,
             micro_max_proc_size=micro_max_proc_size,
             groups=groups,
+            whitelist_ids=whitelist_ids,
         )
 
     def __repr__(self) -> str:
@@ -338,7 +352,7 @@ def _fetch_image_group(
 ) -> Union[cm.ImageGroup, Literal[False]]:
     if ret := _img_group_cache.get(image_group, False):
         return ret
-    
+
     img_group = cm.ImageGroup().fetch(image_group)
     if img_group:
         _img_group_cache[image_group] = img_group
@@ -408,6 +422,11 @@ class VALISJob(NamedTuple):
     base_dir: pathlib.Path = pathlib.Path(".")
     logger: logging.Logger = logging.getLogger("VALISJob")
 
+    def allow(self, image: int) -> bool:
+        if not self.parameters.whitelist_ids:
+            return True
+        return image in self.parameters.whitelist_ids
+
     def update(self, progress: float, status: str):
         self.cytomine_job.job.update(
             status=cm.Job.RUNNING, progress=round(progress), statusComment=status
@@ -417,6 +436,10 @@ class VALISJob(NamedTuple):
         images = _fetch_image_col(group.id)
         if not images:
             raise ValueError(f"cannot fetch all images for {group.id=}")
+
+        images: List[cm.ImageInstance] = [img for img in images if self.allow(img.id)]
+        if not images:
+            raise ValueError(f"filtering made {group.id=} empty")
         return images
 
     def thumb_path(self, group: RegistrationGroup, image: cm.ImageInstance):
@@ -611,6 +634,9 @@ class VALISJob(NamedTuple):
 
             an: cm.Annotation
             for an in an_coll:
+                if not self.allow(an.image):
+                    continue
+
                 src_img = _fetch_image(an.image)
                 if not src_img:
                     raise ValueError(f"cannot fetch ImageInstance with id={an.image}")
@@ -623,6 +649,9 @@ class VALISJob(NamedTuple):
                 an_gt: cm.Annotation
                 for an_gt in an_coll:
                     if an_gt.image == an.image:
+                        continue
+                    
+                    if not self.allow(an_gt.image):
                         continue
 
                     dst_img = _fetch_image(an_gt.image)
