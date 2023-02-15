@@ -6,7 +6,7 @@
         "type": "singularity"
     },
     "schema-version": "cytomine-0.1",
-    "command-line": "CYTOMINE_HOST CYTOMINE_PUBLIC_KEY CYTOMINE_PRIVATE_KEY CYTOMINE_ID_PROJECT CYTOMINE_ID_SOFTWARE EVAL_ANNOTATION_GROUPS EVAL_IMAGE_GROUPS IMAGE_WHITELIST FIX_GRAYSCALE_IMAGES DATA_ANNOTATIONS IMAGE_CROP IMAGE_ORDERING ALIGN_TOWARD_REFERENCE REGISTRATION_TYPE COMPOSE_NON_RIGID MAX_PROC_SIZE MICRO_MAX_PROC_SIZE",
+    "command-line": "CYTOMINE_HOST CYTOMINE_PUBLIC_KEY CYTOMINE_PRIVATE_KEY CYTOMINE_ID_PROJECT CYTOMINE_ID_SOFTWARE EVAL_ANNOTATION_GROUPS EVAL_IMAGE_GROUPS IMAGE_WHITELIST FIX_GRAYSCALE_IMAGES DATA_ANNOTATIONS PRED_ALL_ANNOTATIONS IMAGE_CROP IMAGE_ORDERING ALIGN_TOWARD_REFERENCE REGISTRATION_TYPE COMPOSE_NON_RIGID MAX_PROC_SIZE MICRO_MAX_PROC_SIZE",
     "inputs": [
         {
             "id": "cytomine_host",
@@ -173,13 +173,23 @@
         {
             "id": "data_annotations",
             "name": "Annotation to map",
-            "description": "These annotations will be mapped on all images of the same image group they are defined in.",
+            "description": "These annotations will be mapped on all images of the same image group they are defined in. Ignored if *Map all annotations* is checked.",
             "type": "ListDomain",
             "uri": "/api/annotation.json?project=$currentProject$",
             "uri-print-attribute": "id",
             "uri-sort-attribute": "id",
             "optional": true,
             "default-value": "",
+            "value-key": "@ID",
+            "command-line-flag": "--@id"
+        },
+        {
+            "id": "pred_all_annotations",
+            "name": "Map all annotations",
+            "description": "When checked, all annotations of the images will be mapped to the other images. Checking this option ignores *Annotation to map*.",
+            "type": "Boolean",
+            "optional": true,
+            "default-value": false,
             "value-key": "@ID",
             "command-line-flag": "--@id"
         },

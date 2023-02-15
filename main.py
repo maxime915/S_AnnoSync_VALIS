@@ -238,6 +238,11 @@ class JobParameters(NamedTuple):
         whitelist_ids = get(ns, "image_whitelist", eil, eil(""))
         grayscale_ids = get(ns, "fix_grayscale_images", eil, eil(""))
 
+        pred_all = get(ns, "pred_all_annotations", eb, False)
+        if pred_all and pred_an_ids:
+            warnings.warn("selected annotations in data_annotations are ignored")
+            pred_an_ids = []
+
         # caches to avoid duplicate API calls
         all_image_group: Dict[int, cm.ImageGroup] = {}
         all_annotation_group: Dict[int, cm.AnnotationGroup] = {}
@@ -282,6 +287,26 @@ class JobParameters(NamedTuple):
                     continue
                 all_annotation_group[ag.id] = ag
                 ig_to_ag[ig_id].add(ag)
+
+        if pred_all:
+            for ig_id, ig in all_image_group.items():
+                images = _fetch_image_col(ig_id)
+                if images is False:
+                    raise ValueError(f"unable to fetch images of {ig_id=!r}")
+                
+                for img in images:
+                    if whitelist_ids and img.id not in whitelist_ids:
+                        continue
+                    ac = cm.AnnotationCollection()
+                    ac.image = img.id
+                    ac = ac.fetch()
+                    
+                    if ac is False:
+                        raise ValueError(f"unable to fetch annotations for {img.id=!r}")
+                    
+                    an: cm.Annotation
+                    for an in ac:
+                        ig_to_an[ig_id].add(an)
 
         # fetch all annotations
         for an_id in pred_an_ids:
