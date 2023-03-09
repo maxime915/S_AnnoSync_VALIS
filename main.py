@@ -168,8 +168,11 @@ def get(
 
 
 @contextlib.contextmanager
-def no_output():
+def no_output(silent: bool):
     try:
+        if not silent:
+            yield None
+            return
         with open(os.devnull, "w", encoding="utf8") as devnull:
             with contextlib.redirect_stderr(devnull):
                 with contextlib.redirect_stdout(devnull):
@@ -202,9 +205,13 @@ class JobParameters(NamedTuple):
     whitelist_ids: List[int]
     grayscale_images: List[int]
 
+    full_log: bool
+
     @staticmethod
     def check(ns):
         "raise ValueError on bad parameters"
+
+        full_log = get(ns, "full_log", eb, False)
 
         ## parse common parameters
         image_crop = get(ns, "image_crop", ImageCrop, ImageCrop.ALL)
@@ -293,7 +300,7 @@ class JobParameters(NamedTuple):
                 images = _fetch_image_col(ig_id)
                 if images is False:
                     raise ValueError(f"unable to fetch images of {ig_id=!r}")
-                
+
                 for img in images:
                     if whitelist_ids and img.id not in whitelist_ids:
                         continue
@@ -302,10 +309,10 @@ class JobParameters(NamedTuple):
                     ac.showWKT = True
                     ac.showTerm = True
                     ac = ac.fetch()
-                    
+
                     if ac is False:
                         raise ValueError(f"unable to fetch annotations for {img.id=!r}")
-                    
+
                     an: cm.Annotation
                     for an in ac:
                         ig_to_an[ig_id].add(an)
@@ -363,6 +370,7 @@ class JobParameters(NamedTuple):
             groups=groups,
             whitelist_ids=whitelist_ids,
             grayscale_images=grayscale_ids,
+            full_log=full_log,
         )
 
     def __repr__(self) -> str:
@@ -489,6 +497,10 @@ class VALISJob(NamedTuple):
     base_dir: pathlib.Path = pathlib.Path(".")
     logger: logging.Logger = logging.getLogger("VALISJob")
 
+    @property
+    def silent(self):
+        return not self.parameters.full_log
+
     def allow(self, image: int) -> bool:
         if not self.parameters.whitelist_ids:
             return True
@@ -572,7 +584,7 @@ class VALISJob(NamedTuple):
         registrar = registration.Valis(**self.get_valis_args(group))
 
         # rigid and non-rigid registration
-        with no_output():
+        with no_output(self.silent):
             rigid_registrar, _, _ = registrar.register()
 
         assert rigid_registrar is not None
@@ -585,7 +597,7 @@ class VALISJob(NamedTuple):
             kwargs[
                 "max_non_rigid_registartion_dim_px"
             ] = self.parameters.micro_max_proc_size
-            with no_output():
+            with no_output(self.silent):
                 registrar.register_micro(**kwargs)
 
             self.logger.info("micro registration done")

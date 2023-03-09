@@ -6,7 +6,7 @@
         "type": "singularity"
     },
     "schema-version": "cytomine-0.1",
-    "command-line": "CYTOMINE_HOST CYTOMINE_PUBLIC_KEY CYTOMINE_PRIVATE_KEY CYTOMINE_ID_PROJECT CYTOMINE_ID_SOFTWARE EVAL_ANNOTATION_GROUPS EVAL_IMAGE_GROUPS IMAGE_WHITELIST FIX_GRAYSCALE_IMAGES DATA_ANNOTATIONS PRED_ALL_ANNOTATIONS IMAGE_CROP IMAGE_ORDERING ALIGN_TOWARD_REFERENCE REGISTRATION_TYPE COMPOSE_NON_RIGID MAX_PROC_SIZE MICRO_MAX_PROC_SIZE",
+    "command-line": "CYTOMINE_HOST CYTOMINE_PUBLIC_KEY CYTOMINE_PRIVATE_KEY CYTOMINE_ID_PROJECT CYTOMINE_ID_SOFTWARE EVAL_ANNOTATION_GROUPS EVAL_IMAGE_GROUPS IMAGE_WHITELIST FIX_GRAYSCALE_IMAGES DATA_ANNOTATIONS PRED_ALL_ANNOTATIONS IMAGE_CROP IMAGE_ORDERING ALIGN_TOWARD_REFERENCE REGISTRATION_TYPE COMPOSE_NON_RIGID MAX_PROC_SIZE MICRO_MAX_PROC_SIZE FULL_LOG",
     "inputs": [
         {
             "id": "cytomine_host",
@@ -212,6 +212,16 @@
             "integer": true,
             "optional": true,
             "default-value": 3000,
+            "value-key": "@ID",
+            "command-line-flag": "--@id"
+        },
+        {
+            "id": "full_log",
+            "name": "Out full log [SEE DESCR.]",
+            "description": "Output the full log of VALIS. WARNING: VALIS outputs a lot of logs which are meant to be seen on a terminal and not in a log file. The log file may be huge (>100MB)",
+            "type": "Boolean",
+            "optional": true,
+            "default-value": false,
             "value-key": "@ID",
             "command-line-flag": "--@id"
         }
