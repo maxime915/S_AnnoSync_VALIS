@@ -468,10 +468,46 @@ def iou_annotations(
     geometry_l = shapely.wkt.loads(left.location)
     geometry_r = shapely.wkt.loads(right.location)
 
+    if geometry_l.area == 0:
+        raise TypeError(f"2D geometry required for {geometry_l=!r}")
+    if geometry_r.area == 0:
+        raise TypeError(f"2D geometry required for {geometry_r=!r}")
+
     inter = geometry_l.intersection(geometry_r).area
     union = geometry_l.area + geometry_r.area - inter
 
     return inter / union
+
+
+def dice_annotations(
+    left: cm.Annotation,
+    right: cm.Annotation,
+) -> float:
+    "compute the dice score for two annotations"
+
+    geometry_l = shapely.wkt.loads(left.location)
+    geometry_r = shapely.wkt.loads(right.location)
+
+    if geometry_l.area == 0:
+        raise TypeError(f"2D geometry required for {geometry_l=!r}")
+    if geometry_r.area == 0:
+        raise TypeError(f"2D geometry required for {geometry_r=!r}")
+
+    inter = geometry_l.intersection(geometry_r).area
+
+    return 2.0 * inter / (geometry_l.area + geometry_r.area)
+
+
+def distance_annotations(
+    left: cm.Annotation,
+    right: cm.Annotation,
+) -> float:
+    "computes the mean TRE (L2 distance) for the points in two annotations"
+
+    geometry_l = shapely.wkt.loads(left.location)
+    geometry_r = shapely.wkt.loads(right.location)
+
+    return geometry_l.distance(geometry_r)
 
 
 def tre_annotations(
@@ -483,8 +519,10 @@ def tre_annotations(
     geometry_l = shapely.wkt.loads(left.location)
     geometry_r = shapely.wkt.loads(right.location)
 
-    assert isinstance(geometry_l, Point)
-    assert isinstance(geometry_r, Point)
+    if not isinstance(geometry_l, Point):
+        raise TypeError(f"Point required for {geometry_l=!r}")
+    if not isinstance(geometry_r, Point):
+        raise TypeError(f"Point required for {geometry_r=!r}")
 
     return geometry_l.distance(geometry_r)
 
@@ -694,9 +732,12 @@ class VALISJob(NamedTuple):
             "evaluation on %d annotation groups", len(group.eval_annotation_groups)
         )
 
-        # metric measurements
-        tre_ = tre_annotations, []
-        iou_ = iou_annotations, []
+        metrics = [
+            ("TRE", tre_annotations, []),
+            ("IoU", iou_annotations, []),
+            ("DIST", distance_annotations, []),
+            ("Dice", dice_annotations, []),
+        ]  # type: list[tuple[str, Callable[[cm.Annotation, cm.Annotation], float], list[float]]]
 
         for an_group in group.eval_annotation_groups:
             an_coll = cm.AnnotationCollection(group=an_group.id)
@@ -724,11 +765,6 @@ class VALISJob(NamedTuple):
                 if not src_img:
                     raise ValueError(f"cannot fetch ImageInstance with id={an.image}")
 
-                if isinstance(shapely.wkt.loads(an.location), Point):
-                    metric, rows = tre_
-                else:
-                    metric, rows = iou_
-
                 an_gt: cm.Annotation
                 for an_gt in an_coll:
                     if an_gt.image == an.image:
@@ -745,71 +781,52 @@ class VALISJob(NamedTuple):
 
                     # warp an to the image of an_gt
                     pred = self.warp_annotation(an, group, src_img, dst_img, registrar)
+                    base_row = (an_group.id, an.id, src_img.id, an_gt.id, dst_img.id)
 
-                    # IoU between gt and pred
-                    try:
-                        iou = metric(pred, an_gt)
-                    except shapely.errors.ShapelyError as e:
-                        self.logger.error(
-                            "unable to compute IoU between an=%d (img=%d) and "
-                            "an_gt=%d (img_gt=%d) "
-                            "valid an: %s, valid pred: %s, valid gt: %s",
-                            an.id,
-                            src_img.id,
-                            an_gt.id,
-                            dst_img.id,
-                            shapely.wkt.loads(an.location).is_valid,
-                            shapely.wkt.loads(pred.location).is_valid,
-                            shapely.wkt.loads(an_gt.location).is_valid,
-                        )
-                        self.logger.exception(e)
-                        continue
+                    for label, metric, rows in metrics:
+                        try:
+                            value = metric(pred, an_gt)
+                        except TypeError:
+                            continue  # just skip that metric
+                        except shapely.errors.ShapelyError as e:
+                            self.logger.error(
+                                "unable to compute %s between an=%d (img=%d) and "
+                                "an_gt=%d (img_gt=%d) "
+                                "valid an: %s, valid pred: %s, valid gt: %s",
+                                label,
+                                an.id,
+                                src_img.id,
+                                an_gt.id,
+                                dst_img.id,
+                                shapely.wkt.loads(an.location).is_valid,
+                                shapely.wkt.loads(pred.location).is_valid,
+                                shapely.wkt.loads(an_gt.location).is_valid,
+                            )
+                            self.logger.exception(e)
+                            continue
 
-                    rows.append(
-                        (an_group.id, an.id, src_img.id, an_gt.id, dst_img.id, iou)
-                    )
+                        rows.append(base_row + (value,))
 
-        if iou_[1]:
-            filename = group.image_group.name + f"-{group.image_group.id}-iou.csv"
+        for label, _, values in metrics:
+            if not values:
+                continue
+            key = label.lower()
+            filename = group.image_group.name + f"-{group.image_group.id}-{key}.csv"
             path = str(self.base_dir / filename)
             pd.DataFrame(
-                iou_[1],
+                values,
                 columns=[
                     "annotation_group",
                     "annotation_src",
                     "image_src",
                     "annotation_gt",
                     "image_gt",
-                    "iou",
+                    key,
                 ],
             ).to_csv(path)
-
             job_data = cm.JobData(
                 id_job=self.cytomine_job.job.id,
-                key=f"IoU ({group.image_group.id})",
-                filename=filename,
-            )
-            job_data = job_data.save()
-            job_data.upload(path)
-
-        if tre_[1]:
-            filename = group.image_group.name + f"-{group.image_group.id}-tre.csv"
-            path = str(self.base_dir / filename)
-            pd.DataFrame(
-                tre_[1],
-                columns=[
-                    "annotation_group",
-                    "annotation_src",
-                    "image_src",
-                    "annotation_gt",
-                    "image_gt",
-                    "tre",
-                ],
-            ).to_csv(path)
-
-            job_data = cm.JobData(
-                id_job=self.cytomine_job.job.id,
-                key=f"TRE ({group.image_group.id})",
+                key=f"{label} ({group.image_group.id})",
                 filename=filename,
             )
             job_data = job_data.save()
