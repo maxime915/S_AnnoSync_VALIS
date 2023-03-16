@@ -2,6 +2,16 @@
 
 A Cytomine App to make annotation available in all images of an image group,
 and compute an evaluation on some hand-drawn ground truths.
+
+Road-map to HPC ready :
+    - [ ] singularity container
+    - [X] file system variables
+        - this job's $HOME : some configuration file, small output files to save, ...
+        - this job's $GLOBALSCRATCH : most outputs that could be interesting to see
+        - this job's $LOCALSCRATCH : temporary outputs for this job (will be removed afterward)
+        - no disk access outside these files !
+    - [ ] SLDC cytomine to download large images
+    - [ ] some more job parameters ?
 """
 
 import contextlib
@@ -101,18 +111,18 @@ def eb(val: str) -> bool:
     raise ValueError(f"{val=!r} is not a bool")
 
 
-def image_shape(path: str) -> Tuple[int, int]:
-    img = cv2.imread(path)
+def image_shape(path: pathlib.Path) -> Tuple[int, int]:
+    img = cv2.imread(str(path))
     if img is None:
         raise ValueError(f"{path=!r} does not exist")
 
     return img.shape[1::-1]
 
 
-def fix_grayscale(path: str):
+def fix_grayscale(path: pathlib.Path):
     "save an RGB grayscale image as single channel"
 
-    img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+    img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
     if img is None:
         raise ValueError(f"{path=!r} does not exist")
 
@@ -138,8 +148,8 @@ def fix_grayscale(path: str):
         return
 
     # store as grayscale
-    pathlib.Path(path).unlink()
-    cv2.imwrite(path, cv2.cvtColor(img, cv2.COLOR_BGR2GRAY))
+    path.unlink()
+    cv2.imwrite(str(path), cv2.cvtColor(img, cv2.COLOR_BGR2GRAY))
 
 
 @overload
@@ -528,11 +538,25 @@ def tre_annotations(
 
 
 class VALISJob(NamedTuple):
+    "VALISJob: an agglomeration of data useful for this job."
+
+    """directory allocated to this job for important/small outputs of the program,
+    configurations, ..."""
+    home_dir: pathlib.Path
+
+    """temporary directory : it can be erased by the cluster right after this job
+    finishes. Any important file should be moved/copied from this partition to
+    the scratch or home (depending on its size) before the end of the program."""
+    local_scratch: pathlib.Path
+
+    """other inputs and outputs : there is no backup guarantee for this directory,
+    but it can store files reliably for a short duration (enough to inspect the
+    results after a failure, ...). Perfect for I/O images, weights, ..."""
+    global_scratch: pathlib.Path
 
     cytomine_job: cytomine.CytomineJob
     parameters: JobParameters
     name: str
-    base_dir: pathlib.Path = pathlib.Path(".")
     logger: logging.Logger = logging.getLogger("VALISJob")
 
     @property
@@ -559,9 +583,11 @@ class VALISJob(NamedTuple):
             raise ValueError(f"filtering made {group.id=} empty")
         return images
 
-    def thumb_path(self, group: RegistrationGroup, image: cm.ImageInstance):
+    def thumb_path(
+        self, group: RegistrationGroup, image: cm.ImageInstance
+    ) -> pathlib.Path:
         base = self.get_slide_dir(group) / self.get_fname(image)
-        return str(base.with_suffix(".png"))
+        return base.with_suffix(".png")
 
     def download_images(self, group: RegistrationGroup):
 
@@ -576,12 +602,22 @@ class VALISJob(NamedTuple):
                 img_path = self.thumb_path(group, img)
 
                 target = min(max_size, max(img.width, img.height))
-                img.window(0, 0, img.width, img.height, img_path, override=True, max_size=target)
+                img.window(
+                    0,
+                    0,
+                    img.width,
+                    img.height,
+                    str(img_path),
+                    override=True,
+                    max_size=target,
+                )
 
                 actual = max(image_shape(img_path))
                 if actual != target:
                     self.logger.error("id: %s, path: %s", img.id, img_path)
-                    self.logger.error("Cytomine image shape: %s", (img.width, img.height))
+                    self.logger.error(
+                        "Cytomine image shape: %s", (img.width, img.height)
+                    )
                     self.logger.error("requested max_size: %s", max_size)
                     self.logger.error("downloaded shape: %s", image_shape(img_path))
                     raise ValueError("downloaded image doesn't have the right size")
@@ -598,10 +634,9 @@ class VALISJob(NamedTuple):
                 ) from e
 
     def get_valis_args(self, group: RegistrationGroup):
-        slide_dir = self.get_slide_dir(group)
         valis_args = {
-            "src_dir": str(slide_dir),
-            "dst_dir": str(slide_dir.with_name("dst")),
+            "src_dir": str(self.get_slide_dir(group)),
+            "dst_dir": str(self.get_dst_dir(group)),
             "name": self.name,
             "imgs_ordered": self.parameters.image_ordering != ImageOrdering.AUTO,
             "compose_non_rigid": self.parameters.compose_non_rigid,
@@ -642,8 +677,35 @@ class VALISJob(NamedTuple):
 
         return registrar
 
+    def get_csv_dir(self, group: RegistrationGroup) -> pathlib.Path:
+        "a directory where .CSV for the results can be stored"
+
+        if not self.home_dir.exists():
+            raise RuntimeError(f"{self.home_dir=!r} does not exist")
+        csv_dir = self.home_dir / str(group.image_group.id) / "csv"
+        csv_dir.mkdir(
+            parents=True, exist_ok=True
+        )  # could be called before get_slide_dir
+        return csv_dir
+
     def get_slide_dir(self, group: RegistrationGroup) -> pathlib.Path:
-        return self.base_dir / str(group.image_group.id) / "slides"
+        "a directory where images can be stored"
+
+        if not self.global_scratch.exists():
+            raise RuntimeError(f"{self.global_scratch=!r} does not exist")
+        slide_dir = self.global_scratch / str(group.image_group.id) / "slides"
+        slide_dir.mkdir(parents=True, exist_ok=True)
+        return slide_dir
+
+    def get_dst_dir(self, group: RegistrationGroup) -> pathlib.Path:
+        "a directory where VALIS can store some data"
+
+        slide_dir = self.get_slide_dir(group)
+        dst_dir = slide_dir.with_name("valis-dst")
+        dst_dir.mkdir(
+            parents=False, exist_ok=True
+        )  # get_slide_dir() should have created parent
+        return dst_dir
 
     def get_fname(self, image: cm.ImageInstance) -> str:
         if self.parameters.image_ordering == ImageOrdering.CREATED:
@@ -812,7 +874,7 @@ class VALISJob(NamedTuple):
                 continue
             key = label.lower()
             filename = group.image_group.name + f"-{group.image_group.id}-{key}.csv"
-            path = str(self.base_dir / filename)
+            path = str(self.get_csv_dir(group) / filename)
             pd.DataFrame(
                 values,
                 columns=[
@@ -934,9 +996,25 @@ def main(arguments):
         job.job.update(
             status=cm.Job.RUNNING, progress=0, status_comment="Initialization"
         )
+        label = f"{job.software.name}-{job.job.id}"
+        home = pathlib.Path(os.environ.get("WORKDIR", ".")).resolve() / label
+        home.mkdir(parents=True, exist_ok=False)
 
-        base_dir = pathlib.Path(f"./valis-slides-{job.job.id}")
-        base_dir.mkdir(exist_ok=True, parents=False)
+        if g_scratch := os.environ.get("GLOBALSCRATCH", None):
+            global_scratch = pathlib.Path(g_scratch) / label
+        else:
+            global_scratch = home / "scratch"
+        global_scratch.mkdir(parents=True, exist_ok=False)
+
+        if l_scratch := os.environ.get("LOCALSCRATCH", None):
+            local_scratch = pathlib.Path(l_scratch) / label
+            local_scratch.mkdir(parents=True, exist_ok=False)
+        else:
+            local_scratch = global_scratch
+
+        logger.debug("home = %s", str(home))
+        logger.debug("local scratch = %s", str(local_scratch))
+        logger.debug("global scratch = %s", str(global_scratch))
 
         # check all parameters and fetch from Cytomine
         parameters = JobParameters.check(job.parameters)
@@ -949,7 +1027,15 @@ def main(arguments):
         with contextlib.ExitStack() as e:
             registration.init_jvm()
             e.callback(registration.kill_jvm)
-            VALISJob(job, parameters, "main", base_dir, logger).run()
+            VALISJob(
+                home_dir=home,
+                local_scratch=local_scratch,
+                global_scratch=global_scratch,
+                cytomine_job=job,
+                parameters=parameters,
+                name="main",
+                logger=logger,
+            ).run()
 
         job.job.update(
             status=cm.Job.TERMINATED, progress=100, status_comment="Job terminated"
