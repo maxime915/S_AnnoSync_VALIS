@@ -653,7 +653,6 @@ class VALISJob(NamedTuple):
 
     cytomine_job: cytomine.CytomineJob
     parameters: JobParameters
-    name: str
     logger: logging.Logger = logging.getLogger("VALISJob")
 
     @property
@@ -752,7 +751,6 @@ class VALISJob(NamedTuple):
         valis_args = {
             "src_dir": str(self.get_slide_dir(group)),
             "dst_dir": str(self.get_dst_dir(group)),
-            "name": self.name,
             "imgs_ordered": self.parameters.image_ordering != ImageOrdering.AUTO,
             "compose_non_rigid": self.parameters.compose_non_rigid,
             "align_to_reference": not self.parameters.align_toward_reference,
@@ -1147,7 +1145,6 @@ def main(arguments):
                 global_scratch=global_scratch,
                 cytomine_job=job,
                 parameters=parameters,
-                name="main",
                 logger=logger,
             ).run()
 
