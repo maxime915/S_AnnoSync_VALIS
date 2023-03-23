@@ -36,6 +36,6 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt \
 # save time by performing an initial importation of VALIS (resolve maven dependencies)
 RUN python3 -c "from valis.registration import *; init_jvm(); kill_jvm()"
 
-COPY ./main.py ./main.py
+COPY annosync annosync
 
-ENTRYPOINT [ "python3", "/app/main.py" ]
+ENTRYPOINT [ "python3", "-m", "annosync" ]
