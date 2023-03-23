@@ -815,11 +815,10 @@ class VALISJob(NamedTuple):
     def get_dst_dir(self, group: RegistrationGroup) -> pathlib.Path:
         "a directory where VALIS can store some data"
 
-        slide_dir = self.get_slide_dir(group)
-        dst_dir = slide_dir.with_name("valis-dst")
-        dst_dir.mkdir(
-            parents=False, exist_ok=True
-        )  # get_slide_dir() should have created parent
+        if not self.home_dir.exists():
+            raise RuntimeError(f"{self.home_dir=!r} does not exist")
+        dst_dir = self.home_dir / str(group.image_group.id) / "valis-dst"
+        dst_dir.mkdir(parents=True, exist_ok=True)
         return dst_dir
 
     def get_fname(self, image: cm.ImageInstance) -> str:
