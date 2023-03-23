@@ -22,7 +22,6 @@ llvmlite==0.39.1
 lxml==4.9.1
 matplotlib==3.6.2
 networkx==2.8.8
-numba==0.56.4
 numpy==1.23.4
 ome-types==0.3.1
 opencv-contrib-python==4.6.0.66
@@ -43,8 +42,10 @@ scikit-image==0.19.3
 scikit-learn==1.1.3
 scipy==1.9.3
 scyjava==1.8.0
+sldc==1.4.2
+sldc-cytomine==2.2.0
 Shapely==1.8.5.post1
-SimpleITK==2.2.0
+SimpleITK==2.1.1.2
 six==1.16.0
 soupsieve==2.3.2.post1
 Tempita==0.5.2
