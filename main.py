@@ -10,8 +10,7 @@ Road-map to HPC ready :
         - this job's $GLOBALSCRATCH : most outputs that could be interesting to see
         - this job's $LOCALSCRATCH : temporary outputs for this job (will be removed afterward)
         - no disk access outside these files !
-    - [ ] SLDC cytomine to download large images
-    - [ ] some more job parameters ?
+    - [X] SLDC cytomine to download large images
 """
 
 import contextlib
@@ -19,6 +18,7 @@ import enum
 import logging
 import os
 import pathlib
+import shutil
 import sys
 import warnings
 from collections import defaultdict
@@ -46,9 +46,13 @@ import cytomine
 import cytomine.models as cm
 import numpy as np
 import pandas as pd
+import PIL.Image
 import shapely
 import shapely.errors
 import shapely.wkt
+import sldc
+import sldc_cytomine
+import sldc_cytomine.dump
 from shapely.affinity import affine_transform
 from shapely.geometry.point import Point
 from shapely.ops import transform
@@ -58,6 +62,99 @@ from valis import registration
 T = TypeVar("T")
 U = TypeVar("U")
 
+
+class CytominePIMSTile(sldc.Tile):
+    """FIX for newer version of Cytomine. Adapted from
+    https://github.com/bathienle/S_Create_Annotations/blob/b7a0d6916d540d6fde8c74435ce18e5e2e2695cd/run.py#L43"""
+
+    def __init__(
+        self,
+        working_path,
+        parent,
+        offset,
+        width,
+        height,
+        tile_identifier=None,
+        polygon_mask=None,
+        n_jobs=1,
+    ):
+        super().__init__(
+            parent,
+            offset,
+            width,
+            height,
+            tile_identifier=tile_identifier,
+            polygon_mask=polygon_mask,
+        )
+
+        self._working_path = working_path
+        self._n_jobs = n_jobs
+        os.makedirs(working_path, exist_ok=True)
+
+    @property
+    def cache_filename(self):
+        image_instance = self.base_image.image_instance
+        x, y = self.abs_offset_x, self.abs_offset_y
+        width, height = self.width, self.height
+        zoom = self.base_image.zoom_level
+        return f"{image_instance.id}-{zoom}-{x}-{y}-{width}-{height}.png"
+
+    @property
+    def cache_filepath(self):
+        return os.path.join(self._working_path, self.cache_filename)
+
+    @property
+    def np_image(self):
+        try:
+            if (
+                not os.path.exists(self.cache_filepath)
+                and not self.download_tile_image()
+            ):
+                raise sldc.TileExtractionException(
+                    f"Cannot fetch tile at for '{self.cache_filename}'."
+                )
+
+            np_array = np.asarray(PIL.Image.open(self.cache_filepath)).squeeze()
+
+            if (
+                np_array.shape[:2] != (self.height, self.width)
+                or (
+                    self.channels > 1
+                    and (np_array.ndim < 3 or np_array.shape[2] != self.channels)
+                )
+                or (
+                    self.channels == 1
+                    and np_array.ndim > 2
+                    and np_array.shape[2] != self.channels
+                )
+            ):
+                raise sldc.TileExtractionException(
+                    f"Fetched image has invalid size : {np_array.shape} instead "
+                    f"of {(self.width, self.height, self.channels)}"
+                )
+
+            if np_array.ndim == 3 and np_array.shape[2] == 4:
+                np_array = np_array[:, :, :3]
+
+            return np_array.astype("uint8")
+        except IOError as e:
+            raise sldc.TileExtractionException(str(e))
+
+    def download_tile_image(self):
+        slide = self.base_image
+        filepath: str = slide.image_instance.path
+        topology = sldc.TileTopology(slide, None, max_width=256, max_height=256)
+        col_tile: int = self.abs_offset_x // 256
+        row_tile: int = self.abs_offset_y // 256
+        tile_index: int = col_tile + row_tile * topology.tile_horizontal_count
+        _slice: cm.ImageInstance = slide.slice_instance
+
+        url = (
+            f"{_slice.imageServerUrl}/image/{filepath}/tile/"
+            f"zoom/{slide.api_zoom_level}/ti/{tile_index}.png"
+        )
+
+        return cytomine.Cytomine.get_instance().download_file(url, self.cache_filepath)
 
 class ImageOrdering(enum.Enum):
     AUTO = "auto"
@@ -598,20 +695,38 @@ class VALISJob(NamedTuple):
 
         img: cm.ImageInstance
         for img in images:
+            img_path = self.thumb_path(group, img)
+
+            img_max_size = max(img.width, img.height)
+            zoom_level = int(max(0, np.floor(np.log2(img_max_size / max_size))))
+            target = img_max_size // 2**zoom_level
+
+            working_path = self.local_scratch / f"tmp-image-{img.id}"
+            working_path.mkdir(parents=True, exist_ok=False)
+
             try:
-                img_path = self.thumb_path(group, img)
-
-                target = min(max_size, max(img.width, img.height))
-                img.window(
-                    0,
-                    0,
-                    img.width,
-                    img.height,
-                    str(img_path),
-                    override=True,
-                    max_size=target,
+                sldc_cytomine.dump.dump_region(
+                    zone=img,
+                    dest_pattern=str(img_path),
+                    slide_class=sldc_cytomine.CytomineSlide,
+                    tile_class=CytominePIMSTile,
+                    zoom_level=zoom_level,
+                    n_jobs=0,
+                    working_path=working_path,
                 )
+            except Exception as e:
+                raise ValueError(
+                    f"could not download image {img.path} ({img.id}) "
+                    f"for image group {group.image_group.name} "
+                    f"({group.image_group.id})"
+                    f"\n\t{img_path=!r}"
+                    f"\n\t{zoom_level=!r}"
+                    f"\n\t{working_path=!r}"
+                ) from e
+            finally:
+                shutil.rmtree(working_path)
 
+            try:
                 actual = max(image_shape(img_path))
                 if actual != target:
                     self.logger.error("id: %s, path: %s", img.id, img_path)
