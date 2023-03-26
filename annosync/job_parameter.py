@@ -42,6 +42,11 @@ class RegistrationType(enum.Enum):
     MICRO = "micro"
 
 
+class DownloadFormat(enum.Enum):
+    ORIGINAL = "original"
+    PNG = "png"
+
+
 def ei(val: str) -> int:
     "expect int"
     if isinstance(val, int):
@@ -120,6 +125,7 @@ class JobParameters(NamedTuple):
     compose_non_rigid: bool
     max_proc_size: int
     micro_max_proc_size: int
+    download_format: DownloadFormat
 
     groups: Sequence[RegistrationGroup]
     whitelist_ids: List[int]
@@ -143,6 +149,7 @@ class JobParameters(NamedTuple):
         compose_non_rigid = get(ns, "compose_non_rigid", eb, False)
         max_proc_size = get(ns, "max_proc_size", ei)
         micro_max_proc_size = get(ns, "micro_max_proc_size", ei)
+        download_format = get(ns, "download_format", DownloadFormat, DownloadFormat.PNG)
 
         if max_proc_size is None:
             max_proc_size = registration.DEFAULT_MAX_PROCESSED_IMG_SIZE
@@ -287,6 +294,7 @@ class JobParameters(NamedTuple):
             compose_non_rigid=compose_non_rigid,
             max_proc_size=max_proc_size,
             micro_max_proc_size=micro_max_proc_size,
+            download_format=download_format,
             groups=groups,
             whitelist_ids=whitelist_ids,
             grayscale_images=grayscale_ids,

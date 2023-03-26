@@ -6,7 +6,7 @@
         "type": "singularity"
     },
     "schema-version": "cytomine-0.1",
-    "command-line": "CYTOMINE_HOST CYTOMINE_PUBLIC_KEY CYTOMINE_PRIVATE_KEY CYTOMINE_ID_PROJECT CYTOMINE_ID_SOFTWARE EVAL_ANNOTATION_GROUPS EVAL_IMAGE_GROUPS IMAGE_WHITELIST FIX_GRAYSCALE_IMAGES DATA_ANNOTATIONS PRED_ALL_ANNOTATIONS IMAGE_CROP IMAGE_ORDERING ALIGN_TOWARD_REFERENCE REGISTRATION_TYPE COMPOSE_NON_RIGID MAX_PROC_SIZE MICRO_MAX_PROC_SIZE FULL_LOG",
+    "command-line": "CYTOMINE_HOST CYTOMINE_PUBLIC_KEY CYTOMINE_PRIVATE_KEY CYTOMINE_ID_PROJECT CYTOMINE_ID_SOFTWARE EVAL_ANNOTATION_GROUPS EVAL_IMAGE_GROUPS IMAGE_WHITELIST FIX_GRAYSCALE_IMAGES DATA_ANNOTATIONS PRED_ALL_ANNOTATIONS IMAGE_CROP IMAGE_ORDERING ALIGN_TOWARD_REFERENCE REGISTRATION_TYPE COMPOSE_NON_RIGID MAX_PROC_SIZE MICRO_MAX_PROC_SIZE FULL_LOG DOWNLOAD_FORMAT",
     "inputs": [
         {
             "id": "cytomine_host",
@@ -222,6 +222,20 @@
             "type": "Boolean",
             "optional": true,
             "default-value": false,
+            "value-key": "@ID",
+            "command-line-flag": "--@id"
+        },
+        {
+            "id": "download_format",
+            "name": "Download format [SEE DESCR.]",
+            "description": "Using the 'original' format will cost more time and storage, but may resolve some issues. The option 'png' is able to download smaller versions of the image, faster.",
+            "type": "String",
+            "optional": true,
+            "value-choices": [
+                "png",
+                "original"
+            ],
+            "default-value": "png",
             "value-key": "@ID",
             "command-line-flag": "--@id"
         }

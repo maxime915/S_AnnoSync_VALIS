@@ -31,6 +31,7 @@ from .job_parameter import (
     JobParameters,
     RegistrationGroup,
     RegistrationType,
+    DownloadFormat,
 )
 from .utils import _fetch_image, _fetch_image_col, no_output
 
@@ -86,9 +87,44 @@ class VALISJob(NamedTuple):
         self, group: RegistrationGroup, image: cm.ImageInstance
     ) -> pathlib.Path:
         base = self.get_slide_dir(group) / self.get_fname(image)
-        return base.with_suffix(".png")
+        if self.parameters.download_format == DownloadFormat.PNG:
+            return base.with_suffix(".png")
+        return base
 
     def download_images(self, group: RegistrationGroup):
+        "download all images of the image group"
+
+        if self.parameters.download_format == DownloadFormat.ORIGINAL:
+            self._download_images_original(group)
+        elif self.parameters.download_format == DownloadFormat.PNG:
+            self._download_images_sldc(group)
+        else:
+            assert False, "incomplete switch"
+
+    def _download_images_original(self, group: RegistrationGroup):
+        
+        def _dwl(img: cm.ImageInstance):
+            img_path = self.thumb_path(group, img)
+            result = img.download(str(img_path), override=True)
+            if not result:
+                raise ValueError(f"could not download image {img.id=!r} to {img_path=!r}")
+            return img_path
+
+        images = self.get_images(group.image_group)
+
+        for img in images:
+            try:
+                img_path = _dwl(img)
+                if img.id in self.parameters.grayscale_images:
+                    fix_grayscale(img_path)
+            except Exception as e:
+                raise ValueError(
+                    f"unable to download all images from {group.image_group.id=!r}"
+                    ". See Cytomine's log for more information."
+                ) from e
+
+
+    def _download_images_sldc(self, group: RegistrationGroup):
 
         images = self.get_images(group.image_group)
         max_size = max(
