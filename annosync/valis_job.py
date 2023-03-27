@@ -102,12 +102,13 @@ class VALISJob(NamedTuple):
             assert False, "incomplete switch"
 
     def _download_images_original(self, group: RegistrationGroup):
-        
         def _dwl(img: cm.ImageInstance):
             img_path = self.thumb_path(group, img)
             result = img.download(str(img_path), override=True)
             if not result:
-                raise ValueError(f"could not download image {img.id=!r} to {img_path=!r}")
+                raise ValueError(
+                    f"could not download image {img.id=!r} to {img_path=!r}"
+                )
             return img_path
 
         images = self.get_images(group.image_group)
@@ -115,14 +116,22 @@ class VALISJob(NamedTuple):
         for img in images:
             try:
                 img_path = _dwl(img)
-                if img.id in self.parameters.grayscale_images:
-                    fix_grayscale(img_path)
             except Exception as e:
                 raise ValueError(
                     f"unable to download all images from {group.image_group.id=!r}"
                     ". See Cytomine's log for more information."
                 ) from e
 
+            if img.id not in self.parameters.grayscale_images:
+                continue
+            try:
+                fix_grayscale(img_path)
+            except Exception as e:
+                raise ValueError(
+                    f"unable to adapt grayscale colors for {img.id=!r} "
+                    f"({img_path=!r}). NB: fixing grayscale issue is often not "
+                    "necessary when using original format, and can fail."
+                ) from e
 
     def _download_images_sldc(self, group: RegistrationGroup):
 
@@ -286,7 +295,7 @@ class VALISJob(NamedTuple):
             src_geometry_bl, [1, 0, 0, -1, 0, src_image.height]
         )
 
-        src_shape = image_shape(self.thumb_path(group, src_image))
+        src_shape = src_slide.slide_dimensions_wh[0]
 
         src_geometry_file_tl = affine_transform(
             src_geometry_tl,
@@ -309,7 +318,7 @@ class VALISJob(NamedTuple):
 
         dst_geometry_file_tl = transform(warper_, src_geometry_file_tl)
 
-        dst_shape = image_shape(self.thumb_path(group, dst_image))
+        dst_shape = dst_slide.slide_dimensions_wh[0]
 
         dst_geometry_tl = affine_transform(
             dst_geometry_file_tl,

@@ -110,6 +110,7 @@ class CytominePIMSTile(sldc.Tile):
 
 
 def image_shape(path: pathlib.Path) -> Tuple[int, int]:
+    "returns the spatial dimensions as a tuple (width, height)"
     img = cv2.imread(str(path))
     if img is None:
         raise ValueError(f"{path=!r} does not exist")
