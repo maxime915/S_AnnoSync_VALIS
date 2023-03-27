@@ -94,19 +94,23 @@ class CytominePIMSTile(sldc.Tile):
 
     def download_tile_image(self):
         slide = self.base_image
-        filepath: str = slide.image_instance.path
         topology = sldc.TileTopology(slide, None, max_width=256, max_height=256)
         col_tile: int = self.abs_offset_x // 256
         row_tile: int = self.abs_offset_y // 256
         tile_index: int = col_tile + row_tile * topology.tile_horizontal_count
-        _slice: cm.ImageInstance = slide.slice_instance
-
-        url = (
-            f"{_slice.imageServerUrl}/image/{filepath}/tile/"
-            f"zoom/{slide.api_zoom_level}/ti/{tile_index}.png"
+        _slice: cm.SliceInstance = slide.slice_instance
+        
+        return cytomine.Cytomine.get_instance().download_file(
+            f"{_slice.imageServerUrl}/slice/tile",
+            self.cache_filepath,
+            override=False,
+            payload={
+                "fif": _slice.path,
+                "mimeType": _slice.mime,
+                "tileIndex": tile_index,
+                "z": slide.api_zoom_level
+            }
         )
-
-        return cytomine.Cytomine.get_instance().download_file(url, self.cache_filepath)
 
 
 def image_shape(path: pathlib.Path) -> Tuple[int, int]:
