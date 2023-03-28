@@ -1,5 +1,7 @@
+import json
 import os
 import pathlib
+import tempfile
 import warnings
 from typing import Tuple
 
@@ -13,6 +15,38 @@ import shapely.errors
 import shapely.wkt
 import sldc
 from shapely.geometry.point import Point
+
+
+def get_json(url: str):
+    "return ($ok, $value) : value should be discarded if $ok is False"
+    with tempfile.TemporaryDirectory() as tmpDir:
+        path = pathlib.Path(tmpDir) / "tmp.json"
+        res = cytomine.Cytomine.get_instance().download_file(url, path)
+
+        if not res:
+            return False, None
+
+        with open(path, "r", encoding="utf-8") as tmpData:
+            return True, json.loads(tmpData.read())
+
+
+def is_pyramidal_tiff(slice_: cm.SliceInstance):
+    "check if $slice_ is in pyramidal tiff format"
+
+    base = f"{slice_.imageServerUrl}/image/{slice_.path}"
+
+    ok, representation = get_json(f"{base}/info/representations/SPATIAL")
+    error = ValueError(f"cannot check if {slice_.id=} is in PYRTIFF format")
+
+    if not ok:
+        raise error
+
+    try:
+        extension: str = representation["file"]["extension"]
+    except KeyError:
+        raise error
+
+    return extension == ".PYRTIFF"
 
 
 class CytominePIMSTile(sldc.Tile):
@@ -66,24 +100,17 @@ class CytominePIMSTile(sldc.Tile):
                     f"Cannot fetch tile at for '{self.cache_filename}'."
                 )
 
-            np_array = np.asarray(PIL.Image.open(self.cache_filepath)).squeeze()
-
-            if (
-                np_array.shape[:2] != (self.height, self.width)
-                or (
-                    self.channels > 1
-                    and (np_array.ndim < 3 or np_array.shape[2] != self.channels)
+            np_array = np.asarray(PIL.Image.open(self.cache_filepath))
+            if np_array.ndim not in [2, 3]:
+                raise ValueError(f"{np_array.ndim=!r} not in [2, 3]")
+            if np_array.shape[:2] != (self.height, self.width):
+                raise ValueError(
+                    f"{np_array.shape[:2]=} != ({self.height=}, {self.width=})"
                 )
-                or (
-                    self.channels == 1
-                    and np_array.ndim > 2
-                    and np_array.shape[2] != self.channels
-                )
-            ):
-                raise sldc.TileExtractionException(
-                    f"Fetched image has invalid size : {np_array.shape} instead "
-                    f"of {(self.width, self.height, self.channels)}"
-                )
+            if np_array.ndim == 3 and self.channels != np_array.shape[2]:
+                raise ValueError(f"{np_array.shape[2]=} != {self.channels=}")
+            if np_array.ndim == 2 and self.channels != 1:
+                raise ValueError(f"channel axis missing ({self.channels=})")
 
             if np_array.ndim == 3 and np_array.shape[2] == 4:
                 np_array = np_array[:, :, :3]
@@ -99,18 +126,24 @@ class CytominePIMSTile(sldc.Tile):
         row_tile: int = self.abs_offset_y // 256
         tile_index: int = col_tile + row_tile * topology.tile_horizontal_count
         _slice: cm.SliceInstance = slide.slice_instance
-        
-        return cytomine.Cytomine.get_instance().download_file(
-            f"{_slice.imageServerUrl}/slice/tile",
+
+        segment = "tile" if is_pyramidal_tiff(_slice) else "normalized-tile"
+        status = cytomine.Cytomine.get_instance().download_file(
+            f"{_slice.imageServerUrl}/image/{_slice.path}/{segment}/"
+            f"zoom/{slide.api_zoom_level}/ti/{tile_index}.png",
             self.cache_filepath,
             override=False,
-            payload={
-                "fif": _slice.path,
-                "mimeType": _slice.mime,
-                "tileIndex": tile_index,
-                "z": slide.api_zoom_level
-            }
+            payload={"mimeType": _slice.mime},
         )
+
+        w, h = image_shape(self.cache_filepath)
+        valid = [256, self.width % 256, self.height % 256]
+        if w not in valid:
+            raise ValueError(f"invalid {w=!r} ({valid=!r})")
+        if h not in valid:
+            raise ValueError(f"invalid {h=!r} ({valid=!r})")
+
+        return status
 
 
 def image_shape(path: pathlib.Path) -> Tuple[int, int]:
