@@ -53,6 +53,9 @@ class VALISJob(NamedTuple):
     results after a failure, ...). Perfect for I/O images, weights, ..."""
     global_scratch: pathlib.Path
 
+    """read-only cache for the images"""
+    image_cache: pathlib.Path
+
     cytomine_job: cytomine.CytomineJob
     parameters: JobParameters
     logger: logging.Logger = logging.getLogger("VALISJob")
@@ -71,6 +74,39 @@ class VALISJob(NamedTuple):
             status=cm.Job.RUNNING, progress=round(progress), statusComment=status
         )
 
+    def img_cache_dir(self, key: str):
+        """a read-only cache directory that can be reused for multiple jobs
+
+        Args:
+            key (str): an important feature (size, format, ...) for the images
+
+        Raises:
+            RuntimeError: if the global scratch is not available
+            ValueError: if the key is invalid (falsy)
+
+        Returns:
+            pathlib.Path: the cache directory
+        """
+
+        if not self.image_cache.exists():
+            raise RuntimeError(f"{self.image_cache=!r} does not exist")
+
+        if not key or not isinstance(key, str) or not key.strip("./ "):
+            raise ValueError(f"{key=!r}: a valid key is required")
+
+        cache = (
+            self.image_cache
+            / "downloaded-images"
+            / str(self.cytomine_job.host)
+            / str(self.cytomine_job.project.id)
+            / key
+        )
+
+        if not cache.exists():
+            raise FileNotFoundError(f"image cache at {cache!r} does not exist")
+
+        return cache
+
     def get_images(self, group: cm.ImageGroup):
         image_col = _fetch_image_col(group.id)
         if not image_col:
@@ -82,14 +118,6 @@ class VALISJob(NamedTuple):
         if not images:
             raise ValueError(f"filtering made {group.id=} empty")
         return images
-
-    def thumb_path(
-        self, group: RegistrationGroup, image: cm.ImageInstance
-    ) -> pathlib.Path:
-        base = self.get_slide_dir(group) / self.get_fname(image)
-        if self.parameters.download_format == DownloadFormat.PNG:
-            return base.with_suffix(".png")
-        return base
 
     def download_images(self, group: RegistrationGroup):
         "download all images of the image group"
@@ -103,8 +131,14 @@ class VALISJob(NamedTuple):
 
     def _download_images_original(self, group: RegistrationGroup):
         def _dwl(img: cm.ImageInstance):
-            img_path = self.thumb_path(group, img)
-            result = img.download(str(img_path), override=True)
+            cache_path = self.img_cache_dir(key="original-fmt") / self.get_fname(img)
+            img_path = self.get_slide_dir(group) / self.get_fname(img)
+            if cache_path.exists():
+                # make a hard link and return
+                img_path.hardlink_to(cache_path)
+                return img_path
+
+            result = img.download(str(img_path), override=False)
             if not result:
                 raise ValueError(
                     f"could not download image {img.id=!r} to {img_path=!r}"
@@ -124,6 +158,10 @@ class VALISJob(NamedTuple):
 
             if img.id not in self.parameters.grayscale_images:
                 continue
+
+            # TODO[cache-mp]: make "fix-grayscale" usable
+            raise NotImplementedError("grayscale fixing temporarily disabled")
+
             try:
                 fix_grayscale(img_path)
             except Exception as e:
@@ -134,6 +172,8 @@ class VALISJob(NamedTuple):
                 ) from e
 
     def _download_images_sldc(self, group: RegistrationGroup):
+        # TODO[cache-mp]: make SLDC usable
+        raise NotImplementedError("SLDC download temporarily disabled")
 
         images = self.get_images(group.image_group)
         max_size = max(
@@ -142,7 +182,7 @@ class VALISJob(NamedTuple):
 
         img: cm.ImageInstance
         for img in images:
-            img_path = self.thumb_path(group, img)
+            img_path = self.get_slide_dir(group) / self.get_fname(img)
 
             img_max_size = max(img.width, img.height)
             zoom_level = int(max(0, np.floor(np.log2(img_max_size / max_size))))
@@ -175,25 +215,29 @@ class VALISJob(NamedTuple):
 
             try:
                 actual = max(image_shape(img_path))
-                if actual != target:
-                    self.logger.error("id: %s, path: %s", img.id, img_path)
-                    self.logger.error(
-                        "Cytomine image shape: %s", (img.width, img.height)
-                    )
-                    self.logger.error("requested max_size: %s", max_size)
-                    self.logger.error("downloaded shape: %s", image_shape(img_path))
-                    raise ValueError("downloaded image doesn't have the right size")
-
-                # make grayscale image single channel
-                if img.id in self.parameters.grayscale_images:
-                    fix_grayscale(img_path)
-
             except ValueError as e:
+                img_path.unlink(missing_ok=True)
                 raise ValueError(
                     f"could not download image {img.path} ({img.id}) "
                     f"for image group {group.image_group.name} "
                     f"({group.image_group.id})"
                 ) from e
+
+            if actual != target:
+                self.logger.error("id: %s, path: %s", img.id, img_path)
+                self.logger.error("Cytomine image shape: %s", (img.width, img.height))
+                self.logger.error("requested max_size: %s", max_size)
+                self.logger.error("downloaded shape: %s", image_shape(img_path))
+                img_path.unlink(missing_ok=True)
+                raise ValueError("downloaded image doesn't have the right size")
+
+            # make grayscale image single channel
+            if img.id in self.parameters.grayscale_images:
+                raise NotImplementedError("grayscale fixing temporarily disabled")
+                try:
+                    fix_grayscale(img_path)
+                except Exception as e:
+                    raise ValueError("unable to fix grayscale image") from e
 
     def get_valis_args(self, group: RegistrationGroup):
         valis_args = {

@@ -29,6 +29,21 @@ def _logger_filter(record: logging.LogRecord) -> bool:
 
     return False
 
+"""
+# TODO[cache-mp]
+
+The idea was to use a R-W image cache such that all jobs could avoid downloading
+multiple times the same images.
+
+The issue faced, is that running multiple jobs in parallel leads to a race
+condition which is very hard to remove (keeping the RW cache). Thus, the cache
+is temporarily made read-only but this has a few limitations :
+    - only original file format is allowed (otherwise the cache is too
+        complicated to manage by hand) -> so no SLDC
+    - the grayscale correction is not allowed (would corrupt the cache)
+
+This text will be removed when a solution is implemented.
+"""
 
 def main(arguments):
     logger = logging.getLogger()
@@ -59,21 +74,26 @@ def main(arguments):
             home = home / label
             home.mkdir(parents=False, exist_ok=False)
 
+        cache_label = f"{job.software.name}-{job.software.id}-cache-dir"
         if g_scratch := os.environ.get("GLOBALSCRATCH", None):
             global_scratch = pathlib.Path(g_scratch) / label
+            image_cache = pathlib.Path(g_scratch) / cache_label
         else:
             global_scratch = home / "scratch"
-        global_scratch.mkdir(parents=True, exist_ok=False)
+            image_cache = global_scratch / "cache-dir"
+        global_scratch.mkdir(parents=False, exist_ok=False)
+        image_cache.mkdir(parents=False, exist_ok=True)  # should be reused
 
         if l_scratch := os.environ.get("LOCALSCRATCH", None):
             local_scratch = pathlib.Path(l_scratch) / label
-            local_scratch.mkdir(parents=True, exist_ok=False)
+            local_scratch.mkdir(parents=False, exist_ok=False)
         else:
             local_scratch = global_scratch
 
         logger.debug("home = %s", str(home))
         logger.debug("local scratch = %s", str(local_scratch))
         logger.debug("global scratch = %s", str(global_scratch))
+        logger.debug("image cache = %s", str(image_cache))
 
         # check all parameters and fetch from Cytomine
         parameters = JobParameters.check(job.parameters)
@@ -90,6 +110,7 @@ def main(arguments):
                 home_dir=home,
                 local_scratch=local_scratch,
                 global_scratch=global_scratch,
+                image_cache=image_cache,
                 cytomine_job=job,
                 parameters=parameters,
                 logger=logger,
@@ -98,5 +119,6 @@ def main(arguments):
         job.job.update(
             status=cm.Job.TERMINATED, progress=100, status_comment="Job terminated"
         )
+
 
 main(sys.argv[1:])

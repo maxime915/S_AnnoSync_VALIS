@@ -150,6 +150,9 @@ class JobParameters(NamedTuple):
         max_proc_size = get(ns, "max_proc_size", ei)
         micro_max_proc_size = get(ns, "micro_max_proc_size", ei)
         download_format = get(ns, "download_format", DownloadFormat, DownloadFormat.PNG)
+        # TODO[cache-mp]
+        if download_format != DownloadFormat.ORIGINAL:
+            raise NotImplementedError("only original format supported for now")
 
         if max_proc_size is None:
             max_proc_size = registration.DEFAULT_MAX_PROCESSED_IMG_SIZE
