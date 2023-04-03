@@ -46,9 +46,18 @@ def main(arguments):
         job.job.update(
             status=cm.Job.RUNNING, progress=0, status_comment="Initialization"
         )
+
         label = f"{job.software.name}-{job.job.id}"
-        home = pathlib.Path(os.environ.get("WORKDIR", ".")).resolve() / label
-        home.mkdir(parents=True, exist_ok=False)
+        home = pathlib.Path(os.environ.get("WORKDIR", ".")).resolve()
+        if not home.exists() and home.parent.exists():
+            # use this as the workdir: no subfolder
+            home.mkdir(parents=False, exist_ok=False)
+        elif not home.exists() and not home.parent.exists():
+            # possibly unintended
+            raise ValueError(f"will not create {home!r}: parent dir not found")
+        else:  # home.exists() is True
+            home = home / label
+            home.mkdir(parents=False, exist_ok=False)
 
         if g_scratch := os.environ.get("GLOBALSCRATCH", None):
             global_scratch = pathlib.Path(g_scratch) / label
