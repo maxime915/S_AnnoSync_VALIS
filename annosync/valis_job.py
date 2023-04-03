@@ -268,9 +268,15 @@ class VALISJob(NamedTuple):
         return dst_dir
 
     def get_fname(self, image: cm.ImageInstance) -> str:
+        fname = pathlib.Path(image.filename)
+
         if self.parameters.image_ordering == ImageOrdering.CREATED:
-            return f"{image.created}_{image.filename}"
-        return image.filename
+            fname = pathlib.Path(f"{image.created}_{image.filename}")
+
+        if self.parameters.download_format == DownloadFormat.PNG:
+            fname = fname.with_suffix(".png")
+
+        return str(fname)
 
     def get_image_slide(
         self,
