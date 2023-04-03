@@ -231,12 +231,12 @@ def distance_annotations(
     left: cm.Annotation,
     right: cm.Annotation,
 ) -> float:
-    "computes the mean TRE (L2 distance) for the points in two annotations"
+    "computes the Hausdorff distance between two annotations"
 
     geometry_l = shapely.wkt.loads(left.location)
     geometry_r = shapely.wkt.loads(right.location)
 
-    return geometry_l.distance(geometry_r)
+    return geometry_l.hausdorff_distance(geometry_r)
 
 
 def tre_annotations(
