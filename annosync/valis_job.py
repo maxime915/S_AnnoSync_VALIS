@@ -36,6 +36,9 @@ from .job_parameter import (
 from .utils import _fetch_image, _fetch_image_col, no_output
 
 
+FORCE_CACHE: bool = True
+
+
 class VALISJob(NamedTuple):
     "VALISJob: an agglomeration of data useful for this job."
 
@@ -137,6 +140,8 @@ class VALISJob(NamedTuple):
                 # make a hard link and return
                 img_path.hardlink_to(cache_path)
                 return img_path
+            elif FORCE_CACHE:
+                raise FileNotFoundError(f"cache {cache_path=!r} not found for {img=!r}")
 
             result = img.download(str(img_path), override=False)
             if not result:
